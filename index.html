@@ -142,9 +142,12 @@
             });
             setSheetsData(newSheets);
             setCloudStatus("synced");
-            if (activeTab === "請點擊右上角匯入 Excel") {
-               const keys = Object.keys(newSheets);
-               if (keys.length > 0) setActiveTab(keys[0]);
+            
+            // 邏輯優化：優先切換到「收款總表」
+            const keys = Object.keys(newSheets);
+            if (keys.length > 0) {
+              const mainTab = keys.find(k => k.includes('收款總表')) || keys[0];
+              setActiveTab(mainTab);
             }
           } else { setCloudStatus("idle"); }
         }, (err) => { setCloudStatus("error"); });
@@ -176,10 +179,11 @@
             const ws = wb.Sheets[name];
             const rawData = window.XLSX.utils.sheet_to_json(ws, { header: 1, raw: false, defval: "" });
             if (rawData.length === 0) return;
+
             let hIdx = 0;
             for (let i = 0; i < Math.min(10, rawData.length); i++) {
               const rowStr = rawData[i].join('').toLowerCase();
-              if (rowStr.includes('樓層') || rowStr.includes('編號') || rowStr.includes('戶別')) {
+              if (rowStr.includes('樓層') || rowStr.includes('編號') || rowStr.includes('戶別') || rowStr.includes('戶名')) {
                 hIdx = i; break;
               }
             }
@@ -204,7 +208,10 @@
 
           if (Object.keys(newData).length > 0) {
             setSheetsData(newData);
-            setActiveTab(Object.keys(newData)[0]);
+            // 匯入後也優先跳轉收款總表
+            const keys = Object.keys(newData);
+            setActiveTab(keys.find(k => k.includes('收款總表')) || keys[0]);
+
             if (user) {
               setCloudStatus("loading");
               try {
@@ -251,25 +258,51 @@
         return base.filter(row => !searchTerm || Object.values(row).some(v => String(v).toLowerCase().includes(searchTerm.toLowerCase())));
       }, [sheetsData, activeTab, searchTerm, customData]);
 
+      // ==========================================
+      // 核心更新：智慧過濾邏輯 (含換約分頁空行過濾)
+      // ==========================================
+      const filteredDisplayData = useMemo(() => {
+        let data = combinedData;
+        // 如果是換約資料分頁，檢查除了「編號」以外是否有實質資料
+        if (activeTab.match(/換約|讓渡/)) {
+          data = data.filter(row => {
+            const contentKeys = Object.keys(row).filter(k => 
+              !['編號', '序號', '_isCustom'].includes(k) && !k.startsWith('__EMPTY')
+            );
+            // 只要有一個內容欄位有值就顯示
+            return contentKeys.some(k => String(row[k]).trim() !== "" && String(row[k]) !== "-");
+          });
+        }
+        return data;
+      }, [combinedData, activeTab]);
+
       const transferUnitKeys = useMemo(() => {
         const keys = new Set();
         Object.keys(sheetsData).forEach(sheetName => {
-          if (sheetName.includes("換約") || sheetName.includes("讓渡")) {
+          if (sheetName.match(/換約|讓渡/)) {
             sheetsData[sheetName].forEach(row => {
               const info = parseUnitInfo(row);
-              if (info.f || info.u) {
-                keys.add(`${info.f}_${info.u}`);
-              }
+              if (info.f || info.u) keys.add(`${info.f}_${info.u}`);
             });
           }
         });
         return keys;
       }, [sheetsData]);
 
+      const sortedTabs = useMemo(() => {
+        const keys = Object.keys(sheetsData);
+        // 將收款總表排到最前面
+        return keys.sort((a, b) => {
+          if (a.includes('收款總表')) return -1;
+          if (b.includes('收款總表')) return 1;
+          return 0;
+        });
+      }, [sheetsData]);
+
       const currentColumns = useMemo(() => {
-        if (combinedData.length === 0) return [];
+        if (filteredDisplayData.length === 0) return [];
         const cols = new Set();
-        combinedData.forEach(row => {
+        filteredDisplayData.forEach(row => {
           Object.keys(row).forEach(k => { 
             if(k !== '_isCustom' && !k.startsWith('__EMPTY') && !k.includes('驗證')) cols.add(k); 
           });
@@ -289,15 +322,15 @@
            return [d, u, a].filter(Boolean);
         }
         return arr;
-      }, [combinedData, activeTab]);
+      }, [filteredDisplayData, activeTab]);
 
       const mergeCols = ['樓層', '編號', '買方', '成交總價'];
       const rowSpans = useMemo(() => {
           const spans = {};
           if (activeTab.match(/匯款|換約|聯絡|客戶/)) return spans;
-          combinedData.forEach(row => { const key = `${normStr(row['樓層'])}_${normStr(row['編號'])}`; spans[key] = (spans[key] || 0) + 1; });
+          filteredDisplayData.forEach(row => { const key = `${normStr(row['樓層'])}_${normStr(row['編號'])}`; spans[key] = (spans[key] || 0) + 1; });
           return spans;
-      }, [combinedData, activeTab]);
+      }, [filteredDisplayData, activeTab]);
 
       const columnTotals = useMemo(() => {
           const totals = {};
@@ -305,9 +338,9 @@
           currentColumns.forEach(col => {
               if (mergeCols.includes(col) && col !== '成交總價') return;
               let sum = 0, hasVal = false;
-              combinedData.forEach((row, idx) => {
+              filteredDisplayData.forEach((row, idx) => {
                   if (col === '成交總價') { 
-                    const pK = idx > 0 ? `${normStr(combinedData[idx-1]['樓層'])}_${normStr(combinedData[idx-1]['編號'])}` : null; 
+                    const pK = idx > 0 ? `${normStr(filteredDisplayData[idx-1]['樓層'])}_${normStr(filteredDisplayData[idx-1]['編號'])}` : null; 
                     if (`${normStr(row['樓層'])}_${normStr(row['編號'])}` === pK) return; 
                   }
                   const val = row[col]; if (val && String(val).trim() !== '') { 
@@ -318,7 +351,7 @@
               if (hasVal) totals[col] = sum;
           });
           return totals;
-      }, [combinedData, currentColumns, activeTab]);
+      }, [filteredDisplayData, currentColumns, activeTab]);
 
       const openUnitDetails = (tF, tU, dB) => {
         const uK = `${tF}_${tU}`;
@@ -385,7 +418,7 @@
         <div className="min-h-screen bg-[#F5F5F0] text-[#4A4A4A] pb-10 font-sans selection:bg-[#8C9B90] selection:text-white">
           <header className="bg-white shadow-sm border-b sticky top-0 z-10 px-4 sm:px-8 py-4 flex flex-col md:flex-row justify-between items-center gap-4">
             <div className="flex flex-col sm:flex-row items-center gap-4">
-              <div className="flex items-center gap-3"><div className="bg-[#8C9B90] p-2 rounded-lg text-white shadow-md"><Home size={24} /></div><h1 className="text-xl font-bold tracking-tight text-[#4A4A4A]">青森苑管理系統</h1></div>
+              <div className="flex items-center gap-3"><div className="bg-[#8C9B90] p-2 rounded-lg text-white shadow-md"><Home size={24} /></div><h1 className="text-xl font-bold tracking-tight">青森苑系統</h1></div>
               <div className="flex items-center gap-2 px-3 py-1 bg-gray-50 border rounded-full">
                 <Database size={14} className={cloudStatus === "synced" ? "text-green-500" : cloudStatus === "loading" ? "text-orange-400 animate-spin" : "text-gray-400"} />
                 <span className="text-[10px] font-bold uppercase tracking-wider text-gray-500">{cloudStatus === "synced" ? "雲端已同步" : cloudStatus === "loading" ? "同步中..." : "尚未匯入資料"}</span>
@@ -401,7 +434,7 @@
 
           <div className="max-w-7xl mx-auto px-4 sm:px-8 py-6">
             <div className="flex overflow-x-auto pb-2 mb-4 gap-2 border-b">
-              {Object.keys(sheetsData).map(t => <button key={t} onClick={() => setActiveTab(t)} className={`px-6 py-2.5 rounded-t-lg font-medium text-sm whitespace-nowrap transition-all ${ activeTab === t ? 'bg-white text-[#8C9B90] border-t-2 border-l border-r border-[#8C9B90]' : 'text-gray-500 hover:text-[#8C9B90]' }`}>{t}</button>)}
+              {sortedTabs.map(t => <button key={t} onClick={() => setActiveTab(t)} className={`px-6 py-2.5 rounded-t-lg font-medium text-sm whitespace-nowrap transition-all ${ activeTab === t ? 'bg-white text-[#8C9B90] border-t-2 border-l border-r border-[#8C9B90]' : 'text-gray-500 hover:text-[#8C9B90]' }`}>{t}</button>)}
             </div>
             
             <div className="bg-white rounded-xl shadow-sm border border-[#D4C9B9]/20 overflow-hidden">
@@ -410,9 +443,9 @@
                   <tr><th className="px-4 py-4 sticky left-0 bg-[#F9F9F8] z-10 w-16 text-center border-r">操作</th>{currentColumns.map((c, i) => <th key={i} className={`px-4 py-4 whitespace-nowrap ${getCategoryStyle(c).isCat ? getCategoryStyle(c).text : ''}`}>{c}</th>)}</tr>
                 </thead>
                 <tbody className="divide-y text-sm">
-                  {combinedData.map((row, idx) => {
+                  {filteredDisplayData.map((row, idx) => {
                     const unit = parseUnitInfo(row); const unitKey = `${unit.f}_${unit.u}`; const isM = Object.keys(rowSpans).length > 0;
-                    const isF = !isM || unitKey !== (idx > 0 ? `${parseUnitInfo(combinedData[idx-1]).f}_${parseUnitInfo(combinedData[idx-1]).u}` : null);
+                    const isF = !isM || unitKey !== (idx > 0 ? `${parseUnitInfo(filteredDisplayData[idx-1]).f}_${parseUnitInfo(filteredDisplayData[idx-1]).u}` : null);
                     const span = isM ? rowSpans[unitKey] : 1;
                     const catStr = row['房48%      土52%'] || row['款項種類'] || row['房48% 土52%'] || '';
                     const isTransferUnit = transferUnitKeys.has(unitKey);
@@ -519,7 +552,7 @@
                                  if(user) await setDoc(doc(db,'artifacts',appId,'public', 'data','custom','additions'), { remittances:uR }, { merge:true });
                                  document.getElementById('remit_date').value = ''; document.getElementById('remit_name').value = ''; document.getElementById('remit_amt').value = '';
                               }
-                           }} className="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2 rounded-xl text-xs font-bold shadow-md transition-all active:scale-95"><Plus size={14}/>新增匯款</button></td>
+                           }} className="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2 rounded-xl text-xs font-bold shadow-md transition-all active:scale-95"><Plus size={14}/>新增</button></td>
                       </tr>
                     </tbody></table></div></div>
                   </div>
