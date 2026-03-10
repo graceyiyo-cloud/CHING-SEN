@@ -54,6 +54,17 @@
     const initialAuthToken = typeof window !== 'undefined' && window.__initial_auth_token ? window.__initial_auth_token : null;
 
     // ==========================================
+    // 欄位強制排序清單 (解決亂跳問題的核心)
+    // ==========================================
+    const MASTER_COLUMN_ORDER = [
+      '樓層', '編號', '買方', '成交總價', 
+      '房48%      土52%', '款項種類', '成交價', 
+      '訂金', '應付簽約金', '應付2F', '應付5F', '應付7F', '應付10F', '應付13F', '應付使照', '應付銀貸', '應付交屋',
+      '手機', '郵遞區號', '通訊地址', '備註', '通知寄紙本', '發票寄送',
+      '讓渡日期', '戶名', '姓名', '讓渡總價', '合約總價', '換約手續費0.1%', '發票號碼', '新戶'
+    ];
+
+    // ==========================================
     // 輔助函式
     // ==========================================
     const normStr = (s) => String(s || '').trim().replace(/\.0$/, '').toUpperCase();
@@ -143,7 +154,6 @@
             setSheetsData(newSheets);
             setCloudStatus("synced");
             
-            // 邏輯優化：優先切換到「收款總表」
             const keys = Object.keys(newSheets);
             if (keys.length > 0) {
               const mainTab = keys.find(k => k.includes('收款總表')) || keys[0];
@@ -208,7 +218,6 @@
 
           if (Object.keys(newData).length > 0) {
             setSheetsData(newData);
-            // 匯入後也優先跳轉收款總表
             const keys = Object.keys(newData);
             setActiveTab(keys.find(k => k.includes('收款總表')) || keys[0]);
 
@@ -258,18 +267,13 @@
         return base.filter(row => !searchTerm || Object.values(row).some(v => String(v).toLowerCase().includes(searchTerm.toLowerCase())));
       }, [sheetsData, activeTab, searchTerm, customData]);
 
-      // ==========================================
-      // 核心更新：智慧過濾邏輯 (含換約分頁空行過濾)
-      // ==========================================
       const filteredDisplayData = useMemo(() => {
         let data = combinedData;
-        // 如果是換約資料分頁，檢查除了「編號」以外是否有實質資料
         if (activeTab.match(/換約|讓渡/)) {
           data = data.filter(row => {
             const contentKeys = Object.keys(row).filter(k => 
               !['編號', '序號', '_isCustom'].includes(k) && !k.startsWith('__EMPTY')
             );
-            // 只要有一個內容欄位有值就顯示
             return contentKeys.some(k => String(row[k]).trim() !== "" && String(row[k]) !== "-");
           });
         }
@@ -291,7 +295,6 @@
 
       const sortedTabs = useMemo(() => {
         const keys = Object.keys(sheetsData);
-        // 將收款總表排到最前面
         return keys.sort((a, b) => {
           if (a.includes('收款總表')) return -1;
           if (b.includes('收款總表')) return 1;
@@ -308,13 +311,16 @@
           });
         });
         let arr = Array.from(cols);
-        const priority = ['樓層', '編號', '買方', '成交總價'];
+        
+        // 強制欄位順序邏輯 (解決亂跳問題)
         arr.sort((a, b) => {
-          const idxA = priority.indexOf(a), idxB = priority.indexOf(b);
+          const idxA = MASTER_COLUMN_ORDER.findIndex(m => a.includes(m));
+          const idxB = MASTER_COLUMN_ORDER.findIndex(m => b.includes(m));
+          
           if (idxA !== -1 && idxB !== -1) return idxA - idxB;
           if (idxA !== -1) return -1;
           if (idxB !== -1) return 1;
-          return 0;
+          return a.localeCompare(b);
         });
 
         if (activeTab.includes('匯款')) {
@@ -418,7 +424,7 @@
         <div className="min-h-screen bg-[#F5F5F0] text-[#4A4A4A] pb-10 font-sans selection:bg-[#8C9B90] selection:text-white">
           <header className="bg-white shadow-sm border-b sticky top-0 z-10 px-4 sm:px-8 py-4 flex flex-col md:flex-row justify-between items-center gap-4">
             <div className="flex flex-col sm:flex-row items-center gap-4">
-              <div className="flex items-center gap-3"><div className="bg-[#8C9B90] p-2 rounded-lg text-white shadow-md"><Home size={24} /></div><h1 className="text-xl font-bold tracking-tight">青森苑系統</h1></div>
+              <div className="flex items-center gap-3"><div className="bg-[#8C9B90] p-2 rounded-lg text-white shadow-md"><Home size={24} /></div><h1 className="text-xl font-bold tracking-tight text-[#4A4A4A]">青森苑管理系統</h1></div>
               <div className="flex items-center gap-2 px-3 py-1 bg-gray-50 border rounded-full">
                 <Database size={14} className={cloudStatus === "synced" ? "text-green-500" : cloudStatus === "loading" ? "text-orange-400 animate-spin" : "text-gray-400"} />
                 <span className="text-[10px] font-bold uppercase tracking-wider text-gray-500">{cloudStatus === "synced" ? "雲端已同步" : cloudStatus === "loading" ? "同步中..." : "尚未匯入資料"}</span>
