@@ -34,7 +34,7 @@
     import { getFirestore, doc, setDoc, getDoc, onSnapshot } from 'firebase/firestore';
 
     // ==========================================
-    // Firebase 初始化
+    // Firebase 初始化設定
     // ==========================================
     const userFirebaseConfig = {
       apiKey: "AIzaSyDREvduzrja4xjF-RCpKa-qv45JZCw9tjI",
@@ -53,6 +53,9 @@
     const appId = typeof window !== 'undefined' && window.__app_id ? window.__app_id : 'qingsenyuan-admin';
     const initialAuthToken = typeof window !== 'undefined' && window.__initial_auth_token ? window.__initial_auth_token : null;
 
+    // ==========================================
+    // 輔助工具函式
+    // ==========================================
     const normStr = (s) => String(s || '').trim().replace(/\.0$/, '').toUpperCase();
 
     const renderDateIfApplicable = (key, val) => {
@@ -93,6 +96,9 @@
 
     const defaultData = { "請點擊右上角匯入 Excel": [] };
 
+    // ==========================================
+    // 主程式元件
+    // ==========================================
     function App() {
       const [sheetsData, setSheetsData] = useState(defaultData);
       const [activeTab, setActiveTab] = useState("請點擊右上角匯入 Excel");
@@ -111,9 +117,6 @@
       const [firebaseInvoices, setFirebaseInvoices] = useState({});
       const [customData, setCustomData] = useState({ units: {}, remittances: [] });
 
-      // ==========================================
-      // 登入驗證與資料持久化邏輯
-      // ==========================================
       useEffect(() => {
         const initAuth = async () => {
           try { if (initialAuthToken) await signInWithCustomToken(auth, initialAuthToken); } 
@@ -126,31 +129,25 @@
 
       useEffect(() => {
         if (!user) return;
-        
-        // 1. 監聽發票與自訂資料 (原本就有的雲端同步)
         const unsubInv = onSnapshot(doc(db, 'artifacts', appId, 'public', 'data', 'invoices', 'all_invoices'), (snapshot) => {
           if (snapshot.exists()) setFirebaseInvoices(snapshot.data());
         });
         const unsubCustom = onSnapshot(doc(db, 'artifacts', appId, 'public', 'data', 'custom', 'additions'), (snapshot) => {
           if (snapshot.exists()) setCustomData(snapshot.data());
         });
-
-        // 2. 關鍵更新：監聽並還原 Excel 主資料庫
         const unsubMaster = onSnapshot(doc(db, 'artifacts', appId, 'public', 'data', 'master', 'spreadsheet'), (snapshot) => {
           if (snapshot.exists()) {
             const data = snapshot.data();
             setSheetsData(data);
             setHasCloudData(true);
-            // 預設跳轉到第一個分頁
-            const keys = Object.keys(data);
-            if (keys.length > 0 && activeTab === "請點擊右上角匯入 Excel") {
-              setActiveTab(keys[0]);
+            if (activeTab === "請點擊右上角匯入 Excel") {
+              const keys = Object.keys(data);
+              if (keys.length > 0) setActiveTab(keys[0]);
             }
           } else {
             setHasCloudData(false);
           }
         });
-
         return () => { unsubInv(); unsubCustom(); unsubMaster(); };
       }, [user]);
 
@@ -168,7 +165,6 @@
         setHasCloudData(false);
       };
 
-      // 處理 Excel 匯入並「同步到雲端」
       const handleFileUpload = (e) => {
         const file = e.target.files[0]; if (!file) return;
         setIsLoading(true);
@@ -214,18 +210,13 @@
           });
 
           if (Object.keys(newData).length > 0) {
-            // 1. 更新本地狀態
             setSheetsData(newData);
             setActiveTab(Object.keys(newData)[0]);
-            // 2. 核心功能：永久保存至 Firebase
             if (user) {
               try {
                 await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'master', 'spreadsheet'), newData);
                 setHasCloudData(true);
-              } catch (error) {
-                console.error("雲端存檔失敗:", error);
-                alert("雲端存檔失敗，請確認資料庫權限或檔案大小。");
-              }
+              } catch (err) { console.error("Cloud Save Failed", err); }
             }
           }
           setIsLoading(false);
@@ -300,40 +291,100 @@
           return totals;
       }, [filteredDisplayData, currentColumns, activeTab]);
 
+      const openUnitDetails = (tF, tU, dB) => {
+        const uK = `${tF}_${tU}`;
+        const info = { 基本資料: { 樓層: tF, 編號: tU, 買方: dB }, 財務款項: { house: {}, land: {} }, 客戶資料: {}, 坪數車位: {}, 匯款紀錄: [], 換約紀錄: [], 其他標籤: [] };
+        Object.keys(sheetsData).forEach(sN => {
+          const sheet = sheetsData[sN];
+          if (sN.includes("匯款")) { 
+            info.匯款紀錄.push(...sheet.filter(r => { const unit = parseUnitInfo(r); return unit.f === tF && unit.u === tU; })); 
+            return; 
+          }
+          if (sN.match(/換約|讓渡/)) { 
+            info.換約紀錄.push(...sheet.filter(r => { const unit = parseUnitInfo(r); return unit.f === tF && unit.u === tU; })); 
+            return; 
+          }
+          const matches = sheet.filter(r => normStr(r['樓層']) === tF && normStr(r['編號']) === tU);
+          if (matches.length > 0) {
+            if (sN.match(/款項|財務|收款/)) { info.財務款項.house = matches.find(m => Object.values(m).some(v => String(v).includes('房屋'))) || matches[0]; info.財務款項.land = matches.find(m => Object.values(m).some(v => String(v).includes('土地'))) || {}; }
+            else if (sN.match(/客戶|聯絡/)) info.客戶資料 = matches[0];
+            else if (sN.match(/坪數|車位/)) info.坪數車位 = matches[0];
+            else info.其他標籤.push({ sheetName: sN, data: matches });
+          }
+        });
+        if (customData?.units?.[uK]) {
+          const cu = customData.units[uK];
+          if (cu.基本資料?.買方) info.基本資料.買方 = cu.基本資料.買方;
+          info.客戶資料 = { ...info.客戶資料, ...cu.客戶資料 };
+          info.坪數車位 = { ...info.坪數車位, ...cu.坪數車位 };
+          info.財務款項.house = { ...info.財務款項.house, ...cu.house };
+          info.財務款項.land = { ...info.財務款項.land, ...cu.land };
+        }
+        info.匯款紀錄.push(...(customData?.remittances || []).filter(r => r.unitKey === uK));
+        setSelectedUnit(info);
+        setIsParkingExpanded(false);
+      };
+
+      const handleUpdateCustomUnit = async (cat, key, val) => {
+         const uK = `${selectedUnit.基本資料.樓層}_${selectedUnit.基本資料.編號}`;
+         const cU = customData.units?.[uK] || {};
+         const uU = { ...customData.units, [uK]: { ...cU, [cat]: { ...(cU[cat] || {}), [key]: val } } };
+         setCustomData(p => ({...p, units: uU}));
+         setSelectedUnit(prev => { 
+           if (cat === 'house' || cat === 'land') return { ...prev, 財務款項: { ...prev.財務款項, [cat]: { ...prev.財務款項[cat], [key]: val } } }; 
+           if (cat === '基本資料') return { ...prev, 基本資料: { ...prev.基本資料, [key]: val } };
+           return { ...prev, [cat]: { ...prev[cat], [key]: val } };
+         });
+         if (user) await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'custom', 'additions'), { units: uU }, { merge: true });
+      };
+
+      const handleInvoiceChange = async (rK, f, v) => {
+        setFirebaseInvoices(prev => ({ ...prev, [rK]: { ...(prev[rK] || {}), [f]: v } }));
+        if (user) await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'invoices', 'all_invoices'), { [rK]: { [f]: v } }, { merge: true });
+      };
+
+      const deleteRemit = async (id) => {
+          if(!confirm("確定刪除此匯款紀錄？")) return;
+          const uR = customData.remittances.filter(r => r.id !== id);
+          setCustomData(p => ({...p, remittances: uR}));
+          setSelectedUnit(p => ({ ...p, 匯款紀錄: p.匯款紀錄.filter(r => r.id !== id) }));
+          if (user) await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'custom', 'additions'), { remittances: uR }, { merge: true });
+      };
+
+      if (!user) {
+        return (
+          <div className="min-h-screen flex items-center justify-center bg-[#F5F5F0] font-sans">
+            <div className="max-w-md w-full bg-white rounded-3xl shadow-xl p-10 text-center border">
+               <Home className="mx-auto text-[#8C9B90] mb-6" size={48} />
+               <h1 className="text-2xl font-bold mb-8">青森苑管理系統</h1>
+               {loginError && <div className="mb-4 text-red-500 text-sm bg-red-50 p-2 rounded">{loginError}</div>}
+               <button onClick={handleGoogleLogin} disabled={isLoggingIn} className="w-full flex items-center justify-center gap-2 bg-white border py-3 rounded-xl shadow-sm hover:bg-gray-50 active:scale-95 transition-all">{isLoggingIn ? <RefreshCw className="animate-spin" /> : <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" className="w-5 h-5" />} 使用 Google 登入</button>
+            </div>
+          </div>
+        );
+      }
+
       return (
         <div className="min-h-screen bg-[#F5F5F0] text-[#4A4A4A] pb-10 font-sans selection:bg-[#8C9B90] selection:text-white">
           <header className="bg-white shadow-sm border-b sticky top-0 z-10 px-4 sm:px-8 py-4 flex flex-col md:flex-row justify-between items-center gap-4">
             <div className="flex flex-col sm:flex-row items-center gap-4">
               <div className="flex items-center gap-3">
                 <div className="bg-[#8C9B90] p-2 rounded-lg text-white shadow-md"><Home size={24} /></div>
-                <h1 className="text-xl font-bold tracking-tight text-[#4A4A4A]">青森苑管理系統</h1>
+                <h1 className="text-xl font-bold tracking-tight">青森苑管理系統</h1>
               </div>
-              
-              {/* 資料庫狀態面板 */}
               <div className="flex items-center gap-2 px-3 py-1 bg-gray-50 border rounded-full">
                 <Database size={14} className={hasCloudData ? "text-green-500" : "text-gray-400"} />
-                <span className="text-[10px] font-bold uppercase tracking-wider text-gray-500">
-                  {hasCloudData ? "已載入雲端主資料" : "尚未匯入主資料"}
-                </span>
-                <div className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse ml-1"></div>
+                <span className="text-[10px] font-bold uppercase tracking-wider text-gray-500">{hasCloudData ? "已載入雲端主資料" : "尚未匯入主資料"}</span>
               </div>
             </div>
-
             <div className="flex items-center gap-3">
-              <div className="relative"><Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={16} /><input type="text" placeholder="快速搜尋..." className="pl-9 pr-4 py-2 bg-[#F5F5F0] border border-transparent focus:border-[#8C9B90] rounded-full text-sm outline-none transition-all w-48 sm:w-64" value={searchTerm} onChange={e=>setSearchTerm(e.target.value)} /></div>
+              <div className="relative"><Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={16} /><input type="text" placeholder="搜尋..." className="pl-9 pr-4 py-2 bg-[#F5F5F0] border border-transparent focus:border-[#8C9B90] rounded-full text-sm outline-none transition-all w-48 sm:w-64" value={searchTerm} onChange={e=>setSearchTerm(e.target.value)} /></div>
               <button onClick={() => setShowAddUnitModal(true)} className="bg-white border border-[#8C9B90] text-[#8C9B90] px-4 py-2 rounded-full text-xs font-bold hover:bg-[#8C9B90] hover:text-white transition-all"><Plus size={14} />雲端新增</button>
-              <label className="cursor-pointer bg-[#8C9B90] text-white px-4 py-2 rounded-full text-xs font-bold hover:bg-[#7A8A7E] shadow-sm flex items-center gap-1">
-                <Upload size={14} /> 匯入 Excel
-                <input type="file" accept=".xlsx, .xls, .csv" className="hidden" onChange={handleFileUpload} />
-              </label>
-              <div className="flex items-center gap-2 pl-3 border-l ml-1">
-                <img src={user?.photoURL} className="w-8 h-8 rounded-full border" />
-                <button onClick={handleLogout} className="p-2 text-gray-400 hover:text-red-500 transition-all"><LogOut size={20} /></button>
-              </div>
+              <label className="cursor-pointer bg-[#8C9B90] text-white px-4 py-2 rounded-full text-xs font-bold hover:bg-[#7A8A7E] shadow-sm flex items-center gap-1"><Upload size={14} /> 匯入 Excel<input type="file" accept=".xlsx, .xls, .csv" className="hidden" onChange={handleFileUpload} /></label>
+              <div className="flex items-center gap-2 pl-3 border-l ml-1"><img src={user?.photoURL} className="w-8 h-8 rounded-full border" /><button onClick={handleLogout} className="p-2 text-gray-400 hover:text-red-500 transition-all"><LogOut size={20} /></button></div>
             </div>
           </header>
 
-          {/* 主表格區域與其餘內容 (維持原樣) */}
           <div className="max-w-7xl mx-auto px-4 sm:px-8 py-6">
             <div className="flex overflow-x-auto pb-2 mb-4 gap-2 border-b">
               {Object.keys(sheetsData).map(t => <button key={t} onClick={() => setActiveTab(t)} className={`px-6 py-2.5 rounded-t-lg font-medium text-sm whitespace-nowrap transition-all ${ activeTab === t ? 'bg-white text-[#8C9B90] border-t-2 border-l border-r border-[#8C9B90]' : 'text-gray-500 hover:text-[#8C9B90]' }`}>{t}</button>)}
@@ -371,13 +422,12 @@
             </div>
           </div>
 
-          {/* 其餘 Modal (Add Unit, Unit Detail) 保持原先的邏輯與結構 */}
-          {showAddUnitModal && <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm"><div className="bg-white p-8 rounded-2xl w-96 shadow-2xl"><h3 className="font-bold mb-6 text-lg text-[#8C9B90] border-b pb-2">建立成交戶</h3><div className="space-y-4"><input id="new_u_f" className="border w-full p-3 rounded-xl outline-none focus:border-[#8C9B90]" placeholder="樓層" /><input id="new_u_u" className="border w-full p-3 rounded-xl outline-none focus:border-[#8C9B90]" placeholder="編號" /></div><div className="flex justify-end gap-3 mt-8"><button onClick={() => setShowAddUnitModal(false)} className="px-5 py-2.5 text-gray-400 text-sm">取消</button><button onClick={() => { const f=document.getElementById('new_u_f').value, u=document.getElementById('new_u_u').value; if(f&&u){ const k=`${normStr(f)}_${normStr(u)}`; const cu={...customData.units, [k]:{ 基本資料:{ 樓層:normStr(f), 編號:normStr(u), 買方: "新客戶" }}}; setCustomData(p=>({...p, units:cu})); if(user) setDoc(doc(db,'artifacts',appId,'public','data','custom','additions'), {units:cu}, {merge:true}); setShowAddUnitModal(false); openUnitDetails(normStr(f), normStr(u), "新客戶"); setIsEditingMode(true); } }} className="bg-[#8C9B90] text-white px-6 py-2.5 rounded-xl text-sm font-bold shadow-md hover:bg-[#7A8A7E]">建立</button></div></div></div>}
+          {showAddUnitModal && <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm"><div className="bg-white p-8 rounded-2xl w-96 shadow-2xl"><h3 className="font-bold mb-6 text-lg text-[#8C9B90] border-b pb-2">建立成交戶</h3><div className="space-y-4"><input id="new_u_f" className="border w-full p-3 rounded-xl outline-none focus:border-[#8C9B90]" placeholder="樓層" /><input id="new_u_u" className="border w-full p-3 rounded-xl outline-none focus:border-[#8C9B90]" placeholder="編號" /></div><div className="flex justify-end gap-3 mt-8"><button onClick={() => setShowAddUnitModal(false)} className="px-5 py-2.5 text-gray-400 text-sm hover:bg-gray-50 rounded-xl">取消</button><button onClick={() => { const f=document.getElementById('new_u_f').value, u=document.getElementById('new_u_u').value; if(f&&u){ const k=`${normStr(f)}_${normStr(u)}`; const cu={...customData.units, [k]:{ 基本資料:{ 樓層:normStr(f), 編號:normStr(u), 買方: "新客戶" }}}; setCustomData(p=>({...p, units:cu})); if(user) setDoc(doc(db,'artifacts',appId,'public','data','custom','additions'), {units:cu}, {merge:true}); setShowAddUnitModal(false); openUnitDetails(normStr(f), normStr(u), "新客戶"); setIsEditingMode(true); } }} className="bg-[#8C9B90] text-white px-6 py-2.5 rounded-xl text-sm font-bold shadow-md hover:bg-[#7A8A7E]">建立</button></div></div></div>}
 
           {selectedUnit && (
             <div className="fixed inset-0 z-40 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm">
               <div className="bg-white rounded-3xl shadow-2xl w-full max-w-6xl max-h-[90vh] flex flex-col overflow-hidden animate-in zoom-in-95 border border-white/20">
-                <div className="flex justify-between items-center px-8 py-5 border-b bg-[#F9F9F8]"><div className="flex items-center gap-5"><div className="bg-[#8C9B90] text-white text-xl font-bold h-14 px-5 rounded-2xl flex items-center justify-center shadow-inner">{selectedUnit.基本資料.樓層}{selectedUnit.基本資料.編號}</div><div>{isEditingMode ? <input className="text-xl font-bold border-b border-[#8C9B90] outline-none bg-transparent" value={selectedUnit.基本資料.買方||''} onChange={e=>handleUpdateCustomUnit('基本資料','買方',e.target.value)} /> : <h2 className="text-xl font-bold text-[#4A4A4A]">{selectedUnit.基本資料.買方||'無買方資料'}</h2>}<p className="text-[10px] text-gray-400 mt-1 uppercase tracking-widest text-[#8C9B90]">已同步至雲端</p></div></div><div className="flex gap-3"><button onClick={()=>setIsEditingMode(!isEditingMode)} className={`px-5 py-2 rounded-full text-xs font-bold transition-all active:scale-95 shadow-sm ${isEditingMode?'bg-orange-500 text-white':'bg-white border text-gray-600 hover:bg-gray-50'}`}>{isEditingMode?'💾 儲存退出':'✏️ 編輯資料'}</button><button onClick={()=>{setSelectedUnit(null);setIsEditingMode(false);}} className="text-gray-400 p-2 hover:bg-gray-100 rounded-full transition-all"><X size={24}/></button></div></div>
+                <div className="flex justify-between items-center px-8 py-5 border-b bg-[#F9F9F8]"><div className="flex items-center gap-5"><div className="bg-[#8C9B90] text-white text-xl font-bold h-14 px-5 rounded-2xl flex items-center justify-center shadow-inner">{selectedUnit.基本資料.樓層}{selectedUnit.基本資料.編號}</div><div>{isEditingMode ? <input className="text-xl font-bold border-b border-[#8C9B90] outline-none bg-transparent" value={selectedUnit.基本資料.買方||''} onChange={e=>handleUpdateCustomUnit('基本資料','買方',e.target.value)} /> : <h2 className="text-xl font-bold text-[#4A4A4A]">{selectedUnit.基本資料.買方||'無買方資料'}</h2>}<p className="text-[10px] text-[#8C9B90] mt-1 uppercase tracking-widest font-bold">已同步至雲端</p></div></div><div className="flex gap-3"><button onClick={()=>setIsEditingMode(!isEditingMode)} className={`px-5 py-2 rounded-full text-xs font-bold transition-all active:scale-95 shadow-sm ${isEditingMode?'bg-orange-500 text-white':'bg-white border text-gray-600 hover:bg-gray-50'}`}>{isEditingMode?'💾 儲存退出':'✏️ 編輯資料'}</button><button onClick={()=>{setSelectedUnit(null);setIsEditingMode(false);}} className="text-gray-400 p-2 hover:bg-gray-100 rounded-full transition-all"><X size={24}/></button></div></div>
                 <div className="flex-1 overflow-y-auto p-8 bg-gray-50/50">
                   {(() => {
                     const pk = Object.entries(selectedUnit.坪數車位||{}).filter(([k,v]) => !['樓層','編號','買方'].includes(k) && !k.startsWith('__EMPTY') && String(v).trim() !== "");
@@ -403,7 +453,8 @@
                         <div className="bg-white p-6 rounded-2xl border shadow-sm lg:col-span-2 relative overflow-hidden"><h3 className="text-sm font-bold text-[#8C9B90] mb-5 border-b pb-2 flex items-center gap-2"><FileText size={16}/>匯款紀錄管理</h3><div className="overflow-x-auto"><table className="w-full text-xs text-left border-collapse"><thead><tr className="bg-gray-50 text-gray-400 font-medium"> <th className="px-4 py-3">匯款日期</th> <th className="px-4 py-3">匯款人</th> <th className="text-right px-4 py-3">金額 (NT$)</th> <th className="bg-blue-50/30 px-4 py-3">發票日期</th> <th className="bg-blue-50/30 px-4 py-3">發票號碼</th> <th className="text-center px-4 py-3">管理</th> </tr></thead><tbody className="divide-y divide-gray-50">
                           {selectedUnit.匯款紀錄.map((r,i) => {
                                   const dK = Object.keys(r).find(k=>k.includes('日期'))||'匯款日期', nK = Object.keys(r).find(k=>k.includes('匯款人') || k.includes('買方'))||'匯款人', aK = Object.keys(r).find(k=>k.includes('金額'))||'金額', amt = parseFloat(String(r[aK]).replace(/,/g,''))||0;
-                                  const rK = r._isCustom ? r.id : `${parseUnitInfo(r).f}${parseUnitInfo(r).u}_${parseUnitInfo(r).b}_${amt}`;
+                                  const unit = parseUnitInfo(r);
+                                  const rK = r._isCustom ? r.id : `${unit.f}${unit.u}_${unit.b}_${amt}`;
                                   const cD = firebaseInvoices[rK] || {};
                                   return <tr key={i} className={`hover:bg-gray-50/50 ${r._isCustom?'bg-blue-50/10':''}`}><td className="px-4 py-3">{renderDateIfApplicable(dK,r[dK])} {r._isCustom && <span className="ml-1 text-[9px] bg-blue-100 text-blue-600 px-1 rounded font-bold">手動</span>}</td><td className="px-4 py-3">{r[nK] || '-'}</td><td className="text-right px-4 font-bold">{amt.toLocaleString()}</td><td className="px-4"><input type="date" className="border-none bg-transparent w-full text-xs" value={cD['發票日期']||''} onChange={e=>handleInvoiceChange(rK,'發票日期',e.target.value)}/></td><td className="px-4"><input type="text" className="border-none bg-transparent w-full text-xs" placeholder="號碼" value={cD['發票號碼']||''} onChange={e=>handleInvoiceChange(rK,'發票號碼',e.target.value)}/></td><td className="text-center px-4">{r._isCustom && <button onClick={()=>deleteRemit(r.id)} className="text-red-300 hover:text-red-500"><Trash2 size={16}/></button>}</td></tr>;
                           })}
