@@ -30,20 +30,23 @@
     .data-cell-wrap {
       white-space: normal !important;
       word-break: break-all !important;
-      max-width: 280px; /* 約 20 個中文字寬 */
-      min-width: 60px;
+      max-width: 280px; 
     }
 
-    /* 針對數值欄位維持較窄寬度 */
-    .num-cell {
-      min-width: 80px;
-      text-align: right;
-    }
+    /* 針對特定欄位進行寬度限制 */
+    .col-floor { width: 40px !important; min-width: 40px; }
+    .col-unit { width: 40px !important; min-width: 40px; }
+    .col-buyer { width: 80px !important; min-width: 80px; max-width: 80px; } /* 4個字寬 */
+    .col-phone { width: 130px !important; min-width: 130px; max-width: 130px; } /* 14個數字寬 */
+    .col-zip { width: 70px !important; min-width: 70px; max-width: 70px; } /* 6個數字寬 */
+    .col-action { width: 44px !important; min-width: 44px; }
 
-    /* 鎖定欄位的陰影效果 */
+    /* 鎖定欄位的陰影 */
     .sticky-shadow {
-      box-shadow: 2px 0 5px -2px rgba(0,0,0,0.1);
+      box-shadow: 1px 0 3px rgba(0,0,0,0.05);
     }
+    
+    table { table-layout: auto; }
   </style>
 </head>
 <body class="bg-[#F5F5F0]">
@@ -77,9 +80,6 @@
     const appId = typeof window !== 'undefined' && window.__app_id ? window.__app_id : 'qingsenyuan-admin';
     const initialAuthToken = typeof window !== 'undefined' && window.__initial_auth_token ? window.__initial_auth_token : null;
 
-    // ==========================================
-    // 欄位強制排序清單
-    // ==========================================
     const MASTER_COLUMN_ORDER = [
       '樓層', '編號', '買方', '成交總價', 
       '房48%土52%', '房48%      土52%', '款項種類', '成交價', 
@@ -88,9 +88,6 @@
       '讓渡日期', '戶名', '姓名', '讓渡總價', '合約總價', '換約手續費0.1%', '發票號碼', '新戶'
     ];
 
-    // ==========================================
-    // 輔助函式
-    // ==========================================
     const normStr = (s) => String(s || '').trim().replace(/\.0$/, '').toUpperCase();
     const cleanStr = (s) => String(s || '').replace(/\s+/g, '');
 
@@ -129,10 +126,8 @@
       return { f: normStr(f), u: normStr(u), b: String(b || '').trim() };
     };
 
-    const defaultData = { "請點擊右上角匯入 Excel": [] };
-
     function App() {
-      const [sheetsData, setSheetsData] = useState(defaultData);
+      const [sheetsData, setSheetsData] = useState({ "請點擊右上角匯入 Excel": [] });
       const [activeTab, setActiveTab] = useState("請點擊右上角匯入 Excel");
       const [searchTerm, setSearchTerm] = useState("");
       const [selectedUnit, setSelectedUnit] = useState(null);
@@ -196,7 +191,7 @@
       };
 
       const handleLogout = async () => {
-        await signOut(auth); setSheetsData(defaultData); setActiveTab("請點擊右上角匯入 Excel"); setCloudStatus("idle");
+        await signOut(auth); setSheetsData({ "請點擊右上角匯入 Excel": [] }); setActiveTab("請點擊右上角匯入 Excel"); setCloudStatus("idle");
       };
 
       const handleFileUpload = (e) => {
@@ -214,7 +209,8 @@
             if (rawData.length === 0) return;
             let hIdx = 0;
             for (let i = 0; i < Math.min(10, rawData.length); i++) {
-              if (rawData[i].join('').toLowerCase().match(/樓層|編號|戶別/)) { hIdx = i; break; }
+              const rowStr = rawData[i].join('').toLowerCase();
+              if (rowStr.includes('樓層') || rowStr.includes('編號') || rowStr.includes('戶別')) { hIdx = i; break; }
             }
             const cleanHeaders = [];
             const seen = {};
@@ -259,8 +255,7 @@
       };
 
       const projectStats = useMemo(() => {
-        let totalSales = 0;
-        let totalReceived = 0;
+        let totalSales = 0, totalReceived = 0;
         const salesTabKey = Object.keys(sheetsData).find(k => k.includes('收款總表'));
         if (salesTabKey) {
           const seenUnits = new Set();
@@ -352,24 +347,25 @@
           return spans;
       }, [filteredDisplayData, activeTab]);
 
+      // 重新加入修復後的 columnTotals
       const columnTotals = useMemo(() => {
-          const totals = {};
-          if (activeTab.match(/匯款|換約|聯絡|客戶/)) return totals;
-          currentColumns.forEach(col => {
-              if (['樓層', '編號', '買方'].includes(col) || col === '成交總價') { if (col !== '成交總價') return; }
-              let sum = 0, hasVal = false;
-              filteredDisplayData.forEach((row, idx) => {
-                  if (col === '成交總價') { 
-                    const pK = idx > 0 ? `${normStr(filteredDisplayData[idx-1]['樓層'])}_${normStr(filteredDisplayData[idx-1]['編號'])}` : null; 
-                    if (`${normStr(row['樓層'])}_${normStr(row['編號'])}` === pK) return; 
-                  }
-                  const val = row[col]; if (val && String(val).trim() !== '') { 
-                    const num = parseFloat(String(val).replace(/,/g, '')); if (!isNaN(num)) { sum += num; hasVal = true; } 
-                  }
-              });
-              if (hasVal) totals[col] = sum;
+        const totals = {};
+        if (activeTab.match(/匯款|換約|聯絡|客戶/)) return totals;
+        currentColumns.forEach(col => {
+          if (['樓層', '編號', '買方'].includes(col)) return;
+          let sum = 0, hasVal = false;
+          filteredDisplayData.forEach((row, idx) => {
+            if (col === '成交總價') { 
+              const pK = idx > 0 ? `${normStr(filteredDisplayData[idx-1]['樓層'])}_${normStr(filteredDisplayData[idx-1]['編號'])}` : null; 
+              if (`${normStr(row['樓層'])}_${normStr(row['編號'])}` === pK) return; 
+            }
+            const val = row[col]; if (val && String(val).trim() !== '') { 
+              const num = parseFloat(String(val).replace(/,/g, '')); if (!isNaN(num)) { sum += num; hasVal = true; } 
+            }
           });
-          return totals;
+          if (hasVal) totals[col] = sum;
+        });
+        return totals;
       }, [filteredDisplayData, currentColumns, activeTab]);
 
       const openUnitDetails = (tF, tU, dB) => {
@@ -403,36 +399,6 @@
         setSelectedUnit(info);
       };
 
-      const handleUpdateCustomUnit = async (cat, key, val) => {
-         const uK = `${selectedUnit.基本資料.樓層}_${selectedUnit.基本資料.編號}`;
-         const cU = customData.units?.[uK] || {};
-         const uU = { ...customData.units, [uK]: { ...cU, [cat]: { ...(cU[cat] || {}), [key]: val } } };
-         setCustomData(p => ({...p, units: uU}));
-         setSelectedUnit(prev => { 
-           if (cat === 'house' || cat === 'land') return { ...prev, 財務款項: { ...prev.財務款項, [cat]: { ...prev.財務款項[cat], [key]: val } } }; 
-           if (cat === '基本資料') return { ...prev, 基本資料: { ...prev.基本資料, [key]: val } };
-           return { ...prev, [cat]: { ...prev[cat], [key]: val } };
-         });
-         if (user) await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'custom', 'additions'), { units: uU }, { merge: true });
-      };
-
-      const handleInvoiceChange = async (rK, f, v) => {
-        setFirebaseInvoices(prev => ({ ...prev, [rK]: { ...(prev[rK] || {}), [f]: v } }));
-        if (user) await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'invoices', 'all_invoices'), { [rK]: { [f]: v } }, { merge: true });
-      };
-
-      if (!user) {
-        return (
-          <div className="min-h-screen flex items-center justify-center bg-[#F5F5F0] font-sans">
-            <div className="max-w-md w-full bg-white rounded-3xl shadow-xl p-10 text-center border">
-               <Home className="mx-auto text-[#8C9B90] mb-6" size={48} />
-               <h1 className="text-2xl font-bold mb-8">青森苑管理系統</h1>
-               <button onClick={handleGoogleLogin} disabled={isLoggingIn} className="w-full flex items-center justify-center gap-2 bg-white border py-3 rounded-xl shadow-sm hover:bg-gray-50 active:scale-95 transition-all font-bold">{isLoggingIn ? <RefreshCw className="animate-spin text-gray-400" /> : <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" className="w-5 h-5" />} 使用 Google 帳號登入</button>
-            </div>
-          </div>
-        );
-      }
-
       return (
         <div className="min-h-screen bg-[#F5F5F0] text-[#4A4A4A] pb-10 font-sans selection:bg-[#8C9B90] selection:text-white">
           <header className="bg-white shadow-sm border-b sticky top-0 z-[60] px-4 sm:px-8 py-3 flex flex-col md:flex-row justify-between items-center gap-4">
@@ -453,14 +419,13 @@
 
           <div className="max-w-full mx-auto px-2 sm:px-6 py-4">
             
-            {/* 上方極簡財務統計條 */}
             <div className="flex flex-wrap items-center gap-x-5 gap-y-1.5 mb-3 bg-white px-4 py-2 rounded-xl shadow-sm border border-[#D4C9B9]/30">
-              <div className="flex items-center gap-2"><TrendingUp size={14} className="text-[#8C9B90]"/><span className="text-[10px] text-gray-400 font-bold">總成交:</span><span className="font-bold text-sm text-gray-700">{projectStats.total.toLocaleString()}</span></div>
-              <div className="flex items-center gap-2"><CreditCard size={14} className="text-green-500"/><span className="text-[10px] text-gray-400 font-bold">已實收:</span><span className="font-bold text-sm text-green-600">{projectStats.received.toLocaleString()}</span></div>
-              <div className="flex items-center gap-2"><Clock size={14} className="text-orange-400"/><span className="text-[10px] text-gray-400 font-bold">未收餘額:</span><span className="font-bold text-sm text-orange-500">{projectStats.outstanding.toLocaleString()}</span></div>
+              <div className="flex items-center gap-2"><TrendingUp size={14} className="text-[#8C9B90]"/><span className="text-[10px] text-gray-400 font-bold uppercase">總成交:</span><span className="font-bold text-sm text-gray-700">{projectStats.total.toLocaleString()}</span></div>
+              <div className="flex items-center gap-2"><CreditCard size={14} className="text-green-500"/><span className="text-[10px] text-gray-400 font-bold uppercase">已實收:</span><span className="font-bold text-sm text-green-600">{projectStats.received.toLocaleString()}</span></div>
+              <div className="flex items-center gap-2"><Clock size={14} className="text-orange-400"/><span className="text-[10px] text-gray-400 font-bold uppercase">未收餘額:</span><span className="font-bold text-sm text-orange-500">{projectStats.outstanding.toLocaleString()}</span></div>
             </div>
 
-            <div className="flex overflow-x-auto pb-1 mb-2 gap-2 border-b border-gray-200">
+            <div className="flex overflow-x-auto pb-1 mb-2 gap-2 border-b border-gray-200 scrollbar-hide">
               {Object.keys(sheetsData).sort((a,b)=>a.includes('收款總表')?-1:b.includes('收款總表')?1:0).map(t => <button key={t} onClick={() => setActiveTab(t)} className={`px-4 py-1.5 rounded-t-lg font-medium text-[11px] whitespace-nowrap transition-all ${ activeTab === t ? 'bg-white text-[#8C9B90] border-t-2 border-l border-r border-[#8C9B90]' : 'text-gray-400' }`}>{t}</button>)}
             </div>
             
@@ -469,18 +434,16 @@
                 <table className="w-full text-left border-collapse">
                   <thead className="sticky top-0 z-[45]">
                     <tr className="text-[10px] text-gray-500 font-bold tracking-tight bg-[#F9F9F8]">
-                      {/* 操作列固定寬度 */}
-                      <th className="w-11 px-1 py-3 sticky left-0 top-0 bg-[#F9F9F8] z-50 text-center border-r border-b">操作</th>
+                      <th className="col-action px-1 py-3 sticky left-0 top-0 bg-[#F9F9F8] z-50 text-center border-r border-b">操作</th>
                       {currentColumns.map((c, i) => {
                         const isUnitInfo = ['樓層', '編號', '買方'].includes(c);
-                        // 校正後的窄版固定位移量
-                        const leftOffset = c === '樓層' ? '44px' : c === '編號' ? '80px' : c === '買方' ? '116px' : '0px';
-                        const colWidth = isUnitInfo ? (c === '買方' ? 'w-24' : 'w-9') : 'w-auto';
+                        const leftOffset = c === '樓層' ? '44px' : c === '編號' ? '84px' : c === '買方' ? '124px' : '0px';
+                        const colClass = c === '樓層' ? 'col-floor' : c === '編號' ? 'col-unit' : c === '買方' ? 'col-buyer' : c === '手機' ? 'col-phone' : c === '郵遞區號' ? 'col-zip' : 'data-cell-wrap';
                         
                         return (
                           <th key={i} 
                               style={isUnitInfo ? { left: leftOffset } : {}}
-                              className={`${colWidth} px-2 py-3 border-b ${isUnitInfo ? 'sticky z-50 bg-[#F9F9F8] border-r sticky-shadow' : 'bg-[#F9F9F8]'} ${getCategoryStyle(c).isCat ? getCategoryStyle(c).text : ''} data-cell-wrap`}>
+                              className={`${colClass} px-2 py-3 border-b ${isUnitInfo ? 'sticky z-50 bg-[#F9F9F8] border-r sticky-shadow' : 'bg-[#F9F9F8]'} ${getCategoryStyle(c).isCat ? getCategoryStyle(c).text : ''}`}>
                             {c}
                           </th>
                         );
@@ -498,7 +461,7 @@
                       return (
                         <tr key={idx} className={`hover:bg-[#F5F5F0]/50 transition-colors ${!unit.b ? 'opacity-60 bg-gray-50/30' : ''}`}>
                           {(!isM || isF) && (
-                            <td rowSpan={span} className="px-1 py-2 sticky left-0 bg-white z-[35] border-r text-center align-middle sticky-shadow">
+                            <td rowSpan={span} className="col-action px-1 py-2 sticky left-0 bg-white z-[35] border-r text-center align-middle sticky-shadow">
                               <button onClick={() => openUnitDetails(unit.f, unit.u, unit.b)} className="text-[9px] bg-[#D4C9B9] text-white px-1.5 py-0.5 rounded hover:bg-[#c3b6a3] transition-all">檢視</button>
                             </td>
                           )}
@@ -509,14 +472,15 @@
                             else if (catStyle.isCat) cls = `${catStyle.text} font-medium`;
                             
                             const isUnitInfo = ['樓層', '編號', '買方'].includes(col);
-                            const leftOffset = col === '樓層' ? '44px' : col === '編號' ? '80px' : col === '買方' ? '116px' : '0px';
+                            const leftOffset = col === '樓層' ? '44px' : col === '編號' ? '84px' : col === '買方' ? '124px' : '0px';
+                            const colClass = col === '樓層' ? 'col-floor' : col === '編號' ? 'col-unit' : col === '買方' ? 'col-buyer' : col === '手機' ? 'col-phone' : col === '郵遞區號' ? 'col-zip' : 'data-cell-wrap';
 
                             if (isM && ['樓層', '編號', '買方', '成交總價'].includes(col)) { 
                               if (!isF) return null; 
                               return (
                                 <td key={i} rowSpan={span} 
                                     style={isUnitInfo ? { left: leftOffset } : {}}
-                                    className={`px-2 py-2 align-middle border-r ${isUnitInfo ? 'sticky z-[30] bg-white' : ''} ${cls} data-cell-wrap`}>
+                                    className={`${colClass} px-2 py-2 align-middle border-r ${isUnitInfo ? 'sticky z-[30] bg-white' : ''} ${cls}`}>
                                   {renderDateIfApplicable(col, row[col])}
                                   {col === '編號' && isTransferUnit && <span className="ml-1 px-0.5 bg-orange-100 text-orange-600 text-[8px] font-bold rounded">換</span>}
                                 </td>
@@ -525,7 +489,7 @@
                             return (
                               <td key={i} 
                                   style={isUnitInfo ? { left: leftOffset } : {}}
-                                  className={`px-2 py-2 border-r ${isUnitInfo ? 'sticky z-[30] bg-white sticky-shadow' : ''} ${cls} data-cell-wrap`}>
+                                  className={`${colClass} px-2 py-2 border-r ${isUnitInfo ? 'sticky z-[30] bg-white sticky-shadow' : ''} ${cls}`}>
                                 {renderDateIfApplicable(col, row[col])}
                                 {col === '編號' && isTransferUnit && !isM && <span className="ml-1 px-0.5 bg-orange-100 text-orange-600 text-[8px] font-bold rounded">換</span>}
                               </td>
@@ -541,12 +505,13 @@
                         <td className="px-2 py-3 sticky left-0 bg-[#E8ECE9] border-r z-50 text-center text-[10px]">合計</td>
                         {currentColumns.map((col, i) => { 
                           const isUnitInfo = ['樓層', '編號', '買方'].includes(col);
-                          const leftOffset = col === '樓層' ? '44px' : col === '編號' ? '80px' : col === '買方' ? '116px' : '0px';
+                          const leftOffset = col === '樓層' ? '44px' : col === '編號' ? '84px' : col === '買方' ? '124px' : '0px';
+                          const colClass = col === '樓層' ? 'col-floor' : col === '編號' ? 'col-unit' : col === '買方' ? 'col-buyer' : col === '手機' ? 'col-phone' : col === '郵遞區號' ? 'col-zip' : 'data-cell-wrap';
                           const t = columnTotals[col]; 
                           return (
                             <td key={i} 
                                 style={isUnitInfo ? { left: leftOffset } : {}}
-                                className={`px-2 py-3 text-right border-r ${isUnitInfo ? 'sticky z-50 bg-[#E8ECE9]' : ''} ${col==='成交總價'?'text-[#8C9B90] text-[12px]':''} data-cell-wrap`}>
+                                className={`${colClass} px-2 py-3 text-right border-r ${isUnitInfo ? 'sticky z-50 bg-[#E8ECE9]' : ''} ${col==='成交總價'?'text-[#8C9B90] text-[11px]':'text-[10px]'}`}>
                               {t?t.toLocaleString():(isUnitInfo?'-':'')}
                             </td>
                           ); 
@@ -559,8 +524,8 @@
             </div>
           </div>
 
-          {/* 其餘 Modal 元件 */}
-          {showAddUnitModal && <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm"><div className="bg-white p-8 rounded-2xl w-96 shadow-2xl"><h3 className="font-bold mb-6 text-lg text-[#8C9B90] border-b pb-2">建立成交戶</h3><div className="space-y-4"><input id="new_u_f" className="border w-full p-3 rounded-xl outline-none focus:border-[#8C9B90]" placeholder="樓層" /><input id="new_u_u" className="border w-full p-3 rounded-xl outline-none focus:border-[#8C9B90]" placeholder="編號" /></div><div className="flex justify-end gap-3 mt-8"><button onClick={() => setShowAddUnitModal(false)} className="px-5 py-2.5 text-gray-400 text-sm hover:bg-gray-50 rounded-xl">取消</button><button onClick={() => { const f=document.getElementById('new_u_f').value, u=document.getElementById('new_u_u').value; if(f&&u){ const k=`${normStr(f)}_${normStr(u)}`; const cu={...customData.units, [k]:{ 基本資料:{ 樓層:normStr(f), 編號:normStr(u), 買方: "新客戶" }}}; setCustomData(p=>({...p, units:cu})); if(user) setDoc(doc(db,'artifacts',appId,'public', 'data','custom','additions'), {units:cu}, {merge:true}); setShowAddUnitModal(false); openUnitDetails(normStr(f), normStr(u), "新客戶"); setIsEditingMode(true); } }} className="bg-[#8C9B90] text-white px-6 py-2.5 rounded-xl text-sm font-bold shadow-md hover:bg-[#7A8A7E]">建立</button></div></div></div>}
+          {/* Modal 元件 */}
+          {showAddUnitModal && <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm"><div className="bg-white p-8 rounded-2xl w-96 shadow-2xl"><h3 className="font-bold mb-6 text-lg text-[#8C9B90] border-b pb-2">建立成交戶</h3><div className="space-y-4"><input id="new_u_f" className="border w-full p-3 rounded-xl outline-none focus:border-[#8C9B90]" placeholder="樓層" /><input id="new_u_u" className="border w-full p-3 rounded-xl outline-none focus:border-[#8C9B90]" placeholder="編號" /></div><div className="flex justify-end gap-3 mt-8"><button onClick={() => setShowAddUnitModal(false)} className="px-5 py-2.5 text-gray-400 text-sm hover:bg-gray-50 rounded-xl">取消</button><button onClick={() => { const f=document.getElementById('new_u_f').value, u=document.getElementById('new_u_u').value; if(f&&u){ const k=`${normStr(f)}_${normStr(u)}`; const cu={...customData.units, [k]:{ 基本資料:{ 樓層:normStr(f), 編號:normStr(u), 買方: "新客戶" }}}; setCustomData(p=>({...p, units:cu})); if(user) setDoc(doc(db,'artifacts',appId,'public','data','custom','additions'), {units:cu}, {merge:true}); setShowAddUnitModal(false); openUnitDetails(normStr(f), normStr(u), "新客戶"); setIsEditingMode(true); } }} className="bg-[#8C9B90] text-white px-6 py-2.5 rounded-xl text-sm font-bold shadow-md hover:bg-[#7A8A7E]">建立</button></div></div></div>}
 
           {selectedUnit && (
             <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm animate-in fade-in duration-200">
@@ -583,7 +548,7 @@
                         })}
                       </div>
                     </div>
-                    <div className="bg-white p-5 rounded-xl border shadow-sm md:col-span-1"><h3 className="text-xs font-bold text-[#8C9B90] mb-4 border-b pb-2 flex items-center gap-2"><DollarSign size={14}/>財務款項沖銷明細</h3><div className="overflow-x-auto"><table className="w-full text-[10px] text-left border-separate border-spacing-y-1"><thead><tr className="text-gray-400 font-bold"><th>階段</th><th className="text-right px-2">房屋款</th><th className="text-right px-2">土地款</th><th className="text-right px-2">合計</th><th className="text-right px-2 text-[#8C9B90]">已付</th><th className="text-right px-2 text-red-500">未付</th><th className="text-center px-2">狀態</th></tr></thead><tbody>
+                    <div className="bg-white p-5 rounded-xl border shadow-sm"><h3 className="text-xs font-bold text-[#8C9B90] mb-4 border-b pb-2 flex items-center gap-2"><DollarSign size={14}/>財務款項沖銷明細</h3><div className="overflow-x-auto"><table className="w-full text-[10px] text-left border-separate border-spacing-y-1"><thead><tr className="text-gray-400 font-bold"><th>階段</th><th className="text-right px-2">房屋款</th><th className="text-right px-2">土地款</th><th className="text-right px-2">合計</th><th className="text-right px-2 text-[#8C9B90]">已付</th><th className="text-right px-2 text-red-500">未付</th><th className="text-center px-2">狀態</th></tr></thead><tbody>
                             {(() => {
                               const house = selectedUnit.財務款項.house || {}, land = selectedUnit.財務款項.land || {};
                               const totalP = (selectedUnit.匯款紀錄 || []).reduce((s,r) => { const aK = Object.keys(r).find(key=>key.includes('金額'))||'金額'; return s + (parseFloat(String(r[aK]).replace(/,/g,''))||0); }, 0);
