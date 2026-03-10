@@ -28,13 +28,13 @@
   <script type="text/babel" data-type="module">
     import React, { useState, useEffect, useMemo } from 'react';
     import { createRoot } from 'react-dom/client';
-    import { Upload, Search, X, Home, User, Phone, MapPin, FileText, DollarSign, Layers, Cloud, RefreshCw, Plus, LogIn, LogOut, AlertCircle, Trash2 } from 'lucide-react';
+    import { Upload, Search, X, Home, User, Phone, MapPin, FileText, DollarSign, Layers, Cloud, RefreshCw, Plus, LogIn, LogOut, AlertCircle, Trash2, ChevronDown, ChevronUp } from 'lucide-react';
     import { initializeApp } from 'firebase/app';
     import { getAuth, onAuthStateChanged, signInWithCustomToken, GoogleAuthProvider, signInWithPopup, signOut } from 'firebase/auth';
     import { getFirestore, doc, setDoc, onSnapshot } from 'firebase/firestore';
 
     // ==========================================
-    // 全域設定與輔助工具 (移動至外部以解決作用域錯誤)
+    // 全域設定與輔助工具
     // ==========================================
     const userFirebaseConfig = {
       apiKey: "AIzaSyDREvduzrja4xjF-RCpKa-qv45JZCw9tjI",
@@ -99,6 +99,7 @@
       const [searchTerm, setSearchTerm] = useState("");
       const [selectedUnit, setSelectedUnit] = useState(null);
       const [isEditingMode, setIsEditingMode] = useState(false);
+      const [isParkingExpanded, setIsParkingExpanded] = useState(false); // 控制產權組態展開狀態
       const [showAddUnitModal, setShowAddUnitModal] = useState(false);
       
       const [isLoading, setIsLoading] = useState(false);
@@ -133,7 +134,7 @@
       const handleGoogleLogin = async () => {
         setIsLoggingIn(true); setLoginError(null);
         try { await signInWithPopup(auth, provider); } 
-        catch (e) { setLoginError("登入失敗，請確認 Firebase 設定。"); } 
+        catch (e) { setLoginError("登入失敗，請檢查設定或授權網域。"); } 
         finally { setIsLoggingIn(false); }
       };
 
@@ -294,6 +295,7 @@
         }
         info.匯款紀錄.push(...(customData?.remittances || []).filter(r => r.unitKey === uK));
         setSelectedUnit(info);
+        setIsParkingExpanded(false); // 每次打開新戶別時預設收摺
       };
 
       const handleUpdateCustomUnit = async (cat, key, val) => {
@@ -303,7 +305,7 @@
          setCustomData(p => ({...p, units: uU}));
          setSelectedUnit(prev => { 
            if (cat === 'house' || cat === 'land') return { ...prev, 財務款項: { ...prev.財務款項, [cat]: { ...prev.財務款項[cat], [key]: val } } }; 
-           if (cat === '基本資料') return { ...prev, 基本資料: { ...prev.基本資料, [key]: val } };
+           if (cat === '基本資料') return { ...prev, 基本資料: { ...prev.基本資料, [key]: value } };
            return { ...prev, [cat]: { ...prev[cat], [key]: val } };
          });
          if (user) await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'custom', 'additions'), { units: uU }, { merge: true });
@@ -384,7 +386,7 @@
             </div>
           </div>
 
-          {showAddUnitModal && <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm animate-in fade-in duration-200"><div className="bg-white p-8 rounded-2xl w-96 shadow-2xl"><h3 className="font-bold mb-6 text-lg text-[#8C9B90] border-b pb-2">建立成交戶</h3><div className="space-y-4"><input id="new_u_f" className="border w-full p-3 rounded-xl outline-none focus:border-[#8C9B90] transition-all" placeholder="樓層 (例如: 2)" /><input id="new_u_u" className="border w-full p-3 rounded-xl outline-none focus:border-[#8C9B90] transition-all" placeholder="編號 (例如: A3)" /></div><div className="flex justify-end gap-3 mt-8"><button onClick={() => setShowAddUnitModal(false)} className="px-5 py-2.5 text-gray-400 text-sm hover:bg-gray-50 rounded-xl">取消</button><button onClick={() => { const f=document.getElementById('new_u_f').value, u=document.getElementById('new_u_u').value; if(f&&u){ const k=`${normStr(f)}_${normStr(u)}`; const cu={...customData.units, [k]:{ 基本資料:{ 樓層:normStr(f), 編號:normStr(u), 買方: "新客戶" }}}; setCustomData(p=>({...p, units:cu})); if(user) setDoc(doc(db,'artifacts',appId,'public','data','custom','additions'), {units:cu}, {merge:true}); setShowAddUnitModal(false); openUnitDetails(normStr(f), normStr(u), "新客戶"); setIsEditingMode(true); } }} className="bg-[#8C9B90] text-white px-6 py-2.5 rounded-xl text-sm font-bold shadow-md hover:bg-[#7A8A7E] active:scale-95 transition-all">建立</button></div></div></div>}
+          {showAddUnitModal && <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm animate-in fade-in duration-200"><div className="bg-white p-8 rounded-2xl w-96 shadow-2xl"><h3 className="font-bold mb-6 text-lg text-[#8C9B90] border-b pb-2">建立成交戶</h3><div className="space-y-4"><input id="new_u_f" className="border w-full p-3 rounded-xl outline-none focus:border-[#8C9B90] transition-all" placeholder="樓層 (例如: 2)" /><input id="new_u_u" className="border w-full p-3 rounded-xl outline-none focus:border-[#8C9B90] transition-all" placeholder="編號 (例如: A3)" /></div><div className="flex justify-end gap-3 mt-8"><button onClick={() => setShowAddUnitModal(false)} className="px-5 py-2.5 text-gray-400 text-sm hover:bg-gray-50 rounded-xl">取消</button><button onClick={() => { const f=document.getElementById('new_u_f').value, u=document.getElementById('new_u_u').value; if(f&&u){ const k=`${normStr(f)}_${normStr(u)}`; const cu={...customData.units, [k]:{ 基本資料:{ 樓層:normStr(f), 編號:normStr(u), 買方: "新客戶" }}}; setCustomData(p=>({...p, units:cu})); if(user) setDoc(doc(db,'artifacts',appId,'public', 'data','custom','additions'), {units:cu}, {merge:true}); setShowAddUnitModal(false); openUnitDetails(normStr(f), normStr(u), "新客戶"); setIsEditingMode(true); } }} className="bg-[#8C9B90] text-white px-6 py-2.5 rounded-xl text-sm font-bold shadow-md hover:bg-[#7A8A7E] active:scale-95 transition-all">建立</button></div></div></div>}
 
           {selectedUnit && (
             <div className="fixed inset-0 z-40 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm animate-in fade-in duration-200">
@@ -396,7 +398,33 @@
                     return (
                       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
                         <div className={`bg-white p-6 rounded-2xl border shadow-sm ${pk.length===0 && !isEditingMode?'lg:col-span-2':''}`}><h3 className="text-sm font-bold text-[#8C9B90] mb-5 border-b pb-2 flex items-center gap-2"><User size={16}/>聯絡資料</h3><div className="space-y-3">{Object.entries(selectedUnit.客戶資料).map(([k,v]) => { if (['樓層','編號','買方'].includes(k) || k.startsWith('__EMPTY')) return null; return <div key={k} className="flex justify-between text-sm border-b border-gray-50 pb-2"><span className="text-gray-400">{k}</span><span className="font-medium text-[#4A4A4A] text-right max-w-[65%]">{renderDateIfApplicable(k,v)}</span></div>; })}</div></div>
-                        {(pk.length>0 || isEditingMode) && ( <div className="bg-white p-6 rounded-2xl border shadow-sm"><h3 className="text-sm font-bold text-[#8C9B90] mb-5 border-b pb-2 flex items-center gap-2"><Layers size={16}/>產權配置</h3><div className="grid grid-cols-2 gap-4">{pk.map(([k,v]) => { const s=getCategoryStyle(k); return <div key={k} className={`${s.bg} p-4 rounded-xl border ${s.border}`}><div className={`text-[10px] ${s.text} font-bold opacity-70 mb-1`}>{k}</div><div className="text-xs font-bold text-[#4A4A4A] truncate">{renderDateIfApplicable(k,v)}</div></div>; })}</div></div> )}
+                        
+                        {/* 產權組態：點選展開模式 */}
+                        {(pk.length>0 || isEditingMode) && ( 
+                          <div className="bg-white p-6 rounded-2xl border shadow-sm flex flex-col h-fit">
+                            <button 
+                              onClick={() => setIsParkingExpanded(!isParkingExpanded)}
+                              className="w-full flex justify-between items-center text-sm font-bold text-[#8C9B90] hover:bg-[#F5F5F0] p-2 rounded-lg transition-all"
+                            >
+                              <span className="flex items-center gap-2"><Layers size={16}/>產權組態</span>
+                              {isParkingExpanded || isEditingMode ? <ChevronUp size={18}/> : <ChevronDown size={18}/>}
+                            </button>
+                            
+                            {(isParkingExpanded || isEditingMode) && (
+                              <div className="grid grid-cols-2 gap-4 mt-4 animate-in slide-in-from-top-2 duration-200">
+                                {pk.map(([k,v]) => { 
+                                  const s=getCategoryStyle(k); 
+                                  return (
+                                    <div key={k} className={`${s.bg} p-4 rounded-xl border ${s.border}`}>
+                                      <div className={`text-[10px] ${s.text} font-bold opacity-70 mb-1`}>{k}</div>
+                                      <div className="text-xs font-bold text-[#4A4A4A] truncate">{renderDateIfApplicable(k,v)}</div>
+                                    </div>
+                                  ); 
+                                })}
+                              </div>
+                            )}
+                          </div> 
+                        )}
                         
                         {/* 瀑布式款項明細表 */}
                         <div className="bg-white p-6 rounded-2xl border shadow-sm lg:col-span-2"><h3 className="text-sm font-bold text-[#8C9B90] mb-5 border-b pb-2 flex items-center gap-2"><DollarSign size={16}/>款項明細表 (自動沖銷)</h3><div className="overflow-x-auto"><table className="w-full text-xs text-left border-separate border-spacing-y-1"><thead><tr className="text-gray-400 font-medium"><th>付款階段</th><th className="text-right px-4">房屋款</th><th className="text-right px-4">土地款</th><th className="text-right px-4">應付合計</th><th className="text-right px-4 text-[#8C9B90]">已付金額</th><th className="text-right px-4 text-red-500">未付餘額</th><th className="text-center px-4">結清狀態</th></tr></thead><tbody className="text-[11px]">
