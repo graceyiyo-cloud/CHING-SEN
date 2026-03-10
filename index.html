@@ -28,9 +28,9 @@
   <script type="text/babel" data-type="module">
     import React, { useState, useEffect, useMemo } from 'react';
     import { createRoot } from 'react-dom/client';
-    import { Upload, Search, X, Home, User, Phone, MapPin, FileText, DollarSign, Layers, Cloud, RefreshCw, Plus } from 'lucide-react';
+    import { Upload, Search, X, Home, User, Phone, MapPin, FileText, DollarSign, Layers, Cloud, RefreshCw, Plus, LogIn, LogOut } from 'lucide-react';
     import { initializeApp } from 'firebase/app';
-    import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from 'firebase/auth';
+    import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken, GoogleAuthProvider, signInWithPopup, signOut } from 'firebase/auth';
     import { getFirestore, doc, setDoc, onSnapshot } from 'firebase/firestore';
 
     const userFirebaseConfig = {
@@ -46,6 +46,7 @@
     const app = initializeApp(firebaseConfig);
     const auth = getAuth(app);
     const db = getFirestore(app);
+    const provider = new GoogleAuthProvider();
     const appId = typeof window !== 'undefined' && window.__app_id ? window.__app_id : 'qingsenyuan-admin';
     const initialAuthToken = typeof window !== 'undefined' && window.__initial_auth_token ? window.__initial_auth_token : null;
 
@@ -69,22 +70,11 @@
       return sVal;
     };
 
-    // ==========================================
-    // 核心升級：專屬顏色判定引擎 (修正車位優先級)
-    // ==========================================
     const getCategoryStyle = (text) => {
       const s = String(text || '');
-      
-      // 1. 車位優先判斷 (即使裡面有包含「土地持分」字眼，只要屬於車位，就標示為車位顏色)
       if (s.includes('車位')) return { isCat: true, text: 'text-purple-700', bg: 'bg-purple-50', border: 'border-purple-200' };
-      
-      // 2. 建物 / 房屋 -> 晴空灰藍
       if (s.includes('建物') || s.includes('房屋')) return { isCat: true, text: 'text-sky-700', bg: 'bg-sky-50', border: 'border-sky-200' };
-      
-      // 3. 土地 -> 琥珀橘褐
       if (s.includes('土地')) return { isCat: true, text: 'text-amber-700', bg: 'bg-amber-50', border: 'border-amber-200' };
-      
-      // 預設樣式
       return { isCat: false, text: 'text-gray-800', bg: 'bg-[#F5F5F0]/50', border: 'border-[#D4C9B9]/20' };
     };
 
@@ -105,17 +95,40 @@
       const [firebaseInvoices, setFirebaseInvoices] = useState({});
       const [customData, setCustomData] = useState({ units: {}, remittances: [] });
 
+      // ==========================================
+      // Firebase 登入邏輯升級：支援 Google 登入
+      // ==========================================
       useEffect(() => {
         const initAuth = async () => {
           try {
-            if (initialAuthToken) await signInWithCustomToken(auth, initialAuthToken);
-            else await signInAnonymously(auth);
+            if (initialAuthToken) {
+              await signInWithCustomToken(auth, initialAuthToken);
+            }
+            // 不需要在此處自動匿名登入，讓使用者手動點選 Google 登入
           } catch (error) { console.error("Firebase Auth Error:", error); }
         };
         initAuth();
         const unsubscribe = onAuthStateChanged(auth, setUser);
         return () => unsubscribe();
       }, []);
+
+      const handleGoogleLogin = async () => {
+        try {
+          await signInWithPopup(auth, provider);
+        } catch (error) {
+          console.error("Login Failed:", error);
+        }
+      };
+
+      const handleLogout = async () => {
+        try {
+          await signOut(auth);
+          setSheetsData(defaultData);
+          setActiveTab("請點擊右上角匯入 Excel");
+        } catch (error) {
+          console.error("Logout Failed:", error);
+        }
+      };
 
       useEffect(() => {
         if (!user) return;
@@ -159,7 +172,6 @@
             }
             
             const headerRow = rawData[headerRowIdx] || [];
-            
             for (let c = 0; c < headerRow.length; c++) {
               if (!headerRow[c] || String(headerRow[c]).trim() === "") {
                 for (let up = headerRowIdx - 1; up >= 0; up--) {
@@ -175,7 +187,6 @@
             for (let c = 0; c < headerRow.length; c++) {
                let rawBase = headerRow[c];
                let base = rawBase ? String(rawBase).replace(/[\r\n\s]+/g, '').trim() : `__EMPTY_${c}`;
-               
                let superCat = "";
                if (headerRowIdx > 0) {
                    for(let upC = c; upC >= 0; upC--) {
@@ -186,20 +197,16 @@
                        }
                    }
                }
-               
                let finalCat = base;
                if (!base.startsWith('__EMPTY') && superCat && (superCat.includes('土地') || superCat.includes('建物') || superCat.includes('車位') || superCat.includes('房屋'))) {
                    if (!base.includes(superCat)) {
                        finalCat = `${superCat}-${base}`;
                    }
                }
-
                if (seen[finalCat]) {
                    seen[finalCat]++;
                    finalCat = `${finalCat}_${seen[finalCat]}`;
-               } else {
-                   seen[finalCat] = 1;
-               }
+               } else { seen[finalCat] = 1; }
                cleanHeaders.push(finalCat);
             }
 
@@ -207,7 +214,6 @@
             for (let r = headerRowIdx + 1; r < rawData.length; r++) {
               const rowArr = rawData[r];
               if (!rowArr || rowArr.length === 0 || rowArr.every(cell => cell === undefined || cell === null || cell === '')) continue;
-              
               const rowObj = {};
               const maxCols = Math.max(cleanHeaders.length, rowArr.length);
               for (let c = 0; c < maxCols; c++) {
@@ -230,26 +236,20 @@
 
       const combinedData = useMemo(() => {
         let base = sheetsData[activeTab] ? [...sheetsData[activeTab]] : []; 
-        
         if (customData && customData.units) {
             Object.keys(customData.units).forEach(key => {
                 const cu = customData.units[key];
                 if (!cu || !cu.基本資料) return;
-                
                 const f = cu.基本資料.樓層;
                 const u = cu.基本資料.編號;
                 const b = cu.基本資料.買方;
-
                 const exists = base.find(r => normStr(r['樓層']) === normStr(f) && normStr(r['編號']) === normStr(u));
                 if (!exists) {
                     const rowMock = { '樓層': f, '編號': u, '買方': b, '_isCustom': true };
                     base.push(rowMock);
-                } else if (b) {
-                   exists['買方'] = b;
-                }
+                } else if (b) { exists['買方'] = b; }
             });
         }
-        
         return base.filter(row => {
           if (!searchTerm) return true;
           return Object.values(row).some(val => String(val).toLowerCase().includes(searchTerm.toLowerCase()));
@@ -261,7 +261,6 @@
         const cols = new Set();
         combinedData.forEach(row => Object.keys(row).forEach(k => { if(k !== '_isCustom') cols.add(k) }));
         let colArray = Array.from(cols);
-
         if (activeTab.includes('匯款')) {
            const dateCol = colArray.find(c => c.includes('日期'));
            const unitCol = colArray.find(c => c.includes('戶別') || c.includes('戶名') || c.includes('編號'));
@@ -275,7 +274,6 @@
       const rowSpans = useMemo(() => {
           const spans = {};
           if (activeTab.includes('匯款') || activeTab.includes('換約') || activeTab.includes('聯絡') || activeTab.includes('客戶') || activeTab.includes('坪數')) return spans;
-          
           combinedData.forEach(row => {
               const key = `${normStr(row['樓層'])}_${normStr(row['編號'])}`;
               spans[key] = (spans[key] || 0) + 1;
@@ -286,10 +284,8 @@
       const columnTotals = useMemo(() => {
           const totals = {};
           if (activeTab.includes('匯款') || activeTab.includes('換約') || activeTab.includes('聯絡') || activeTab.includes('客戶') || activeTab.includes('坪數')) return totals;
-
           currentColumns.forEach(col => {
               if (mergeCols.includes(col) && col !== '成交總價') return;
-              
               let sum = 0;
               let hasVal = false;
               combinedData.forEach((row, idx) => {
@@ -298,7 +294,6 @@
                      const unitKey = `${normStr(row['樓層'])}_${normStr(row['編號'])}`;
                      if (unitKey === prevUnitKey) return;
                   }
-
                   const val = row[col];
                   if (val !== undefined && val !== null && String(val).trim() !== '') {
                      const num = parseFloat(String(val).replace(/,/g, ''));
@@ -314,7 +309,6 @@
         let f = row['樓層'];
         let u = row['編號'];
         let b = row['買方'] || row['姓名'] || row['匯款人'] || row['匯款人(匯款帳戶戶名)'] || '';
-
         if (!f && !u) {
           const combined = String(row['戶別'] || row['戶名'] || '').replace(/\s/g, '');
           const match = combined.match(/^(\d+)[樓Ff]?(.*)$/i);
@@ -326,7 +320,6 @@
 
       const openUnitDetails = (targetF, targetU, defaultBuyer) => {
         const unitKey = `${targetF}_${targetU}`;
-        
         const info = {
           基本資料: { 樓層: targetF, 編號: targetU, 買方: defaultBuyer },
           財務款項: { house: {}, land: {} },
@@ -336,7 +329,6 @@
           換約紀錄: [],
           其他標籤: []
         };
-
         Object.keys(sheetsData).forEach(sheetName => {
           const sheet = sheetsData[sheetName];
           if (sheetName.includes("匯款")) {
@@ -366,7 +358,6 @@
             else info.其他標籤.push({ sheetName, data: matches });
           }
         });
-
         const cu = customData.units?.[unitKey];
         if (cu) {
           if (cu.基本資料?.買方) info.基本資料.買方 = cu.基本資料.買方;
@@ -375,35 +366,66 @@
           info.財務款項.house = { ...info.財務款項.house, ...cu.house };
           info.財務款項.land = { ...info.財務款項.land, ...cu.land };
         }
-        
         const cr = (customData.remittances || []).filter(r => r.unitKey === unitKey);
         info.匯款紀錄.push(...cr);
-
         setSelectedUnit(info);
       };
 
       const handleUpdateCustomUnit = async (category, key, value) => {
          const unitKey = `${selectedUnit.基本資料.樓層}_${selectedUnit.基本資料.編號}`;
          const currentUnitCustom = customData.units?.[unitKey] || { 基本資料:{}, 客戶資料:{}, 坪數車位:{}, house:{}, land:{} };
-         
          const updatedCategory = { ...(currentUnitCustom[category] || {}), [key]: value };
          const updatedCustomUnits = {
             ...customData.units,
             [unitKey]: { ...currentUnitCustom, [category]: updatedCategory }
          };
-         
          setCustomData(prev => ({...prev, units: updatedCustomUnits}));
          setSelectedUnit(prev => {
-             if (category === 'house' || category === 'land') {
-                 return { ...prev, 財務款項: { ...prev.財務款項, [category]: { ...prev.財務款項[category], [key]: value } } };
-             }
-             if (category === '基本資料') {
-                 return { ...prev, 基本資料: { ...prev.基本資料, [key]: value } };
-             }
+             if (category === 'house' || category === 'land') return { ...prev, 財務款項: { ...prev.財務款項, [category]: { ...prev.財務款項[category], [key]: value } } };
+             if (category === '基本資料') return { ...prev, 基本資料: { ...prev.基本資料, [key]: value } };
              return { ...prev, [category]: { ...prev[category], [key]: value } };
          });
-
          if (user) await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'custom', 'additions'), { units: updatedCustomUnits }, { merge: true });
+      };
+
+      const startEditRemit = (record) => {
+          setEditingRemitId(record.id);
+          const dateKey = Object.keys(record).find(k => k.includes('日期')) || '匯款日期';
+          const amtKey = Object.keys(record).find(k => k.includes('金額')) || '匯款金額';
+          let formattedDate = renderDateIfApplicable(dateKey, record[dateKey]);
+          if (formattedDate.includes('/')) formattedDate = formattedDate.replace(/\//g, '-'); 
+          setEditingRemitData({ date: formattedDate, amt: record[amtKey] });
+      };
+
+      const saveEditRemit = async (record) => {
+          const dateKey = Object.keys(record).find(k => k.includes('日期')) || '匯款日期';
+          const amtKey = Object.keys(record).find(k => k.includes('金額')) || '匯款金額';
+          const displayDate = editingRemitData.date.replace(/-/g, '/');
+          const updatedRemits = customData.remittances.map(r => r.id === record.id ? { ...r, [dateKey]: displayDate, [amtKey]: Number(editingRemitData.amt) } : r);
+          setCustomData(prev => ({...prev, remittances: updatedRemits}));
+          setSelectedUnit(prev => ({ ...prev, 匯款紀錄: prev.匯款紀錄.map(r => r.id === record.id ? { ...r, [dateKey]: displayDate, [amtKey]: Number(editingRemitData.amt) } : r) }));
+          if (user) await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'custom', 'additions'), { remittances: updatedRemits }, { merge: true });
+          setEditingRemitId(null);
+      };
+
+      const deleteRemit = async (id) => {
+          if(!window.confirm("確定要刪除這筆匯款紀錄嗎？")) return;
+          const updatedRemits = customData.remittances.filter(r => r.id !== id);
+          setCustomData(prev => ({...prev, remittances: updatedRemits}));
+          setSelectedUnit(prev => ({ ...prev, 匯款紀錄: prev.匯款紀錄.filter(r => r.id !== id) }));
+          if (user) await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'custom', 'additions'), { remittances: updatedRemits }, { merge: true });
+      };
+
+      const handleInvoiceChange = async (recordKey, field, value) => {
+        setFirebaseInvoices(prev => ({
+          ...prev, [recordKey]: { ...(prev[recordKey] || {}), [field]: value }
+        }));
+        if (user) {
+          try {
+            const invoiceDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'invoices', 'all_invoices');
+            await setDoc(invoiceDocRef, { [recordKey]: { [field]: value } }, { merge: true });
+          } catch (error) { console.error("Firestore Save Error:", error); }
+        }
       };
 
       const AddFieldForm = ({ category }) => {
@@ -413,62 +435,44 @@
            <div className="flex flex-col sm:flex-row gap-2 mt-3 pt-3 border-t border-gray-100">
              <input placeholder="自訂新欄位名稱..." className="sm:w-1/3 border border-gray-200 p-1.5 rounded text-sm outline-none focus:border-[#8C9B90]" value={k} onChange={e=>setK(e.target.value)}/>
              <input placeholder="內容值..." className="sm:w-2/3 border border-gray-200 p-1.5 rounded text-sm outline-none focus:border-[#8C9B90]" value={v} onChange={e=>setV(e.target.value)}/>
-             <button onClick={() => {
-                if (k) { handleUpdateCustomUnit(category, k, v); setK(''); setV(''); }
-             }} className="bg-[#8C9B90] text-white px-3 py-1.5 rounded text-sm whitespace-nowrap">新增</button>
+             <button onClick={() => { if (k) { handleUpdateCustomUnit(category, k, v); setK(''); setV(''); } }} className="bg-[#8C9B90] text-white px-3 py-1.5 rounded text-sm whitespace-nowrap">新增</button>
            </div>
          )
       };
 
-      const startEditRemit = (record) => {
-          setEditingRemitId(record.id);
-          const dateKey = Object.keys(record).find(k => k.includes('日期')) || '匯款日期';
-          const amtKey = Object.keys(record).find(k => k.includes('金額')) || '匯款金額';
-          
-          let formattedDate = renderDateIfApplicable(dateKey, record[dateKey]);
-          if (formattedDate.includes('/')) {
-             formattedDate = formattedDate.replace(/\//g, '-'); 
-          }
+      // ==========================================
+      // 未登入介面 (Login Screen)
+      // ==========================================
+      if (!user) {
+        return (
+          <div className="min-h-screen flex items-center justify-center bg-[#F5F5F0] p-6">
+            <div className="max-w-md w-full bg-white rounded-3xl shadow-xl overflow-hidden text-center p-10 border border-[#D4C9B9]/30 animate-in fade-in zoom-in-95 duration-500">
+               <div className="bg-[#8C9B90] w-16 h-16 rounded-2xl flex items-center justify-center text-white mx-auto mb-6">
+                 <Home size={32} />
+               </div>
+               <h1 className="text-3xl font-bold text-[#4A4A4A] mb-2 tracking-tight">青森苑管理系統</h1>
+               <p className="text-gray-400 mb-10 text-sm">請使用 Google 帳號登入以存取雲端案場資料</p>
+               
+               <button 
+                 onClick={handleGoogleLogin}
+                 className="w-full flex items-center justify-center gap-3 bg-white border border-gray-200 hover:bg-gray-50 text-gray-700 font-medium py-3 px-6 rounded-xl transition-all shadow-sm active:scale-95"
+               >
+                 <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" className="w-5 h-5" alt="Google" />
+                 使用 Google 帳號登入
+               </button>
+               
+               <div className="mt-8 pt-8 border-t border-gray-100 flex items-center justify-center gap-2">
+                 <Cloud size={14} className="text-gray-300" />
+                 <span className="text-[10px] text-gray-400 uppercase tracking-widest">Secure Cloud Storage Enabled</span>
+               </div>
+            </div>
+          </div>
+        );
+      }
 
-          setEditingRemitData({
-              date: formattedDate,
-              amt: record[amtKey]
-          });
-      };
-
-      const saveEditRemit = async (record) => {
-          const dateKey = Object.keys(record).find(k => k.includes('日期')) || '匯款日期';
-          const amtKey = Object.keys(record).find(k => k.includes('金額')) || '匯款金額';
-
-          const displayDate = editingRemitData.date.replace(/-/g, '/');
-
-          const updatedRemits = customData.remittances.map(r => {
-              if (r.id === record.id) {
-                  return { ...r, [dateKey]: displayDate, [amtKey]: Number(editingRemitData.amt) };
-              }
-              return r;
-          });
-          setCustomData(prev => ({...prev, remittances: updatedRemits}));
-          setSelectedUnit(prev => ({
-              ...prev,
-              匯款紀錄: prev.匯款紀錄.map(r => r.id === record.id ? { ...r, [dateKey]: displayDate, [amtKey]: Number(editingRemitData.amt) } : r)
-          }));
-
-          if (user) await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'custom', 'additions'), { remittances: updatedRemits }, { merge: true });
-          setEditingRemitId(null);
-      };
-
-      const deleteRemit = async (id) => {
-          if(!window.confirm("確定要刪除這筆匯款紀錄嗎？")) return;
-          const updatedRemits = customData.remittances.filter(r => r.id !== id);
-          setCustomData(prev => ({...prev, remittances: updatedRemits}));
-          setSelectedUnit(prev => ({
-              ...prev,
-              匯款紀錄: prev.匯款紀錄.filter(r => r.id !== id)
-          }));
-          if (user) await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'custom', 'additions'), { remittances: updatedRemits }, { merge: true });
-      };
-
+      // ==========================================
+      // 已登入主介面
+      // ==========================================
       return (
         <div className="min-h-screen bg-[#F5F5F0] text-[#4A4A4A] font-sans selection:bg-[#8C9B90] selection:text-white pb-10">
           
@@ -481,12 +485,9 @@
                   </div>
                   <h1 className="text-2xl font-bold tracking-wider text-[#4A4A4A]">青森苑<span className="text-[#8C9B90] text-sm ml-2 font-normal">案場管理系統</span></h1>
                 </div>
-                
-                <div className="ml-2 px-3 py-1 bg-gray-50 rounded-full flex items-center gap-1.5 border border-gray-100">
-                  <Cloud size={14} className={user ? "text-green-500" : "text-gray-400 animate-pulse"} />
-                  <span className="text-xs font-medium text-gray-500">
-                    {user ? "雲端資料庫已連線" : "連線中..."}
-                  </span>
+                <div className="ml-2 px-3 py-1 bg-green-50 text-green-700 rounded-full flex items-center gap-1.5 border border-green-100 shadow-sm">
+                  <Cloud size={14} />
+                  <span className="text-xs font-semibold">雲端同步中</span>
                 </div>
               </div>
               
@@ -508,9 +509,19 @@
 
                 <label className={`cursor-pointer flex items-center gap-2 bg-[#8C9B90] hover:bg-[#7A8A7E] text-white px-4 py-2 rounded-full text-sm transition-colors shadow-sm whitespace-nowrap ${isLoading ? 'opacity-50 pointer-events-none' : ''}`}>
                   <Upload size={16} />
-                  <span className="hidden sm:inline">{isLoading ? '載入中...' : '重新匯入 Excel'}</span>
+                  <span className="hidden sm:inline">{isLoading ? '載入中...' : '匯入 Excel'}</span>
                   <input type="file" accept=".xlsx, .xls, .csv" className="hidden" onChange={handleFileUpload} />
                 </label>
+
+                {/* 使用者資訊與登出 */}
+                <div className="flex items-center gap-2 pl-2 border-l border-gray-100 ml-1">
+                  <div className="w-8 h-8 rounded-full overflow-hidden border border-gray-200">
+                    <img src={user.photoURL || 'https://www.gravatar.com/avatar?d=mp'} alt="user" className="w-full h-full object-cover" />
+                  </div>
+                  <button onClick={handleLogout} className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-full transition-all" title="登出系統">
+                    <LogOut size={20} />
+                  </button>
+                </div>
               </div>
             </div>
           </header>
@@ -555,14 +566,11 @@
                         const unitInfo = parseUnitInfo(row);
                         const isEmpty = !unitInfo.b;
                         const canView = unitInfo.f || unitInfo.u; 
-                        
                         const unitKey = `${unitInfo.f}_${unitInfo.u}`;
                         const prevUnitKey = idx > 0 ? `${parseUnitInfo(combinedData[idx-1]).f}_${parseUnitInfo(combinedData[idx-1]).u}` : null;
                         const isMergedTab = Object.keys(rowSpans).length > 0;
                         const isFirst = !isMergedTab || unitKey !== prevUnitKey;
                         const span = isMergedTab ? rowSpans[unitKey] : 1;
-
-                        // 判斷該列的屬性 (為了收款總表標色)
                         const rowCatStr = row['房48%      土52%'] || row['款項種類'] || row['房48% 土52%'] || '';
 
                         return (
@@ -571,7 +579,7 @@
                                <td rowSpan={span} className="px-4 py-3 whitespace-nowrap sticky left-0 bg-inherit z-10 border-r border-gray-100 text-center align-middle">
                                  <button 
                                    onClick={() => openUnitDetails(unitInfo.f, unitInfo.u, unitInfo.b)}
-                                   className="text-xs bg-[#D4C9B9] hover:bg-[#c3b6a3] text-white px-3 py-1.5 rounded transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                                   className="text-xs bg-[#D4C9B9] hover:bg-[#c3b6a3] text-white px-3 py-1.5 rounded transition-colors disabled:opacity-30 disabled:cursor-not-allowed shadow-sm"
                                    disabled={!canView}
                                  >
                                    檢視
@@ -579,67 +587,41 @@
                                </td>
                             )}
                             {currentColumns.map((col, i) => {
-                              // 動態套用文字顏色邏輯
                               let cellTextClass = 'text-gray-600';
-                              if (col.includes('買方') || col.includes('姓名')) {
-                                  cellTextClass = 'font-medium text-[#8C9B90]';
-                              } else {
-                                  let targetStr = '';
-                                  if (col.includes('土地') || col.includes('建物') || col.includes('車位') || col.includes('房屋')) {
-                                      targetStr = col;
-                                  } else if (rowCatStr === '土地' || rowCatStr === '房屋' || rowCatStr === '建物') {
-                                      targetStr = rowCatStr;
-                                  }
+                              if (col.includes('買方') || col.includes('姓名')) cellTextClass = 'font-medium text-[#8C9B90]';
+                              else {
+                                  let targetStr = (col.includes('土地') || col.includes('建物') || col.includes('車位') || col.includes('房屋')) ? col : rowCatStr;
                                   const catStyle = getCategoryStyle(targetStr);
                                   if (catStyle.isCat) cellTextClass = `${catStyle.text} font-medium`;
                               }
-
                               if (isMergedTab && mergeCols.includes(col)) {
                                   if (!isFirst) return null;
-                                  return (
-                                     <td key={i} rowSpan={span} className={`px-4 py-3 align-middle whitespace-nowrap text-sm ${cellTextClass}`}>
-                                       {row[col] !== undefined && row[col] !== null && String(row[col]).trim() !== "" ? renderDateIfApplicable(col, row[col]) : '-'}
-                                     </td>
-                                  );
+                                  return ( <td key={i} rowSpan={span} className={`px-4 py-3 align-middle whitespace-nowrap text-sm ${cellTextClass}`}>{row[col] !== undefined && row[col] !== null && String(row[col]).trim() !== "" ? renderDateIfApplicable(col, row[col]) : '-'}</td> );
                               }
-                              return (
-                                <td key={i} className={`px-4 py-3 whitespace-nowrap text-sm ${cellTextClass}`}>
-                                  {row[col] !== undefined && row[col] !== null && String(row[col]).trim() !== "" ? renderDateIfApplicable(col, row[col]) : '-'}
-                                </td>
-                              );
+                              return ( <td key={i} className={`px-4 py-3 whitespace-nowrap text-sm ${cellTextClass}`}>{row[col] !== undefined && row[col] !== null && String(row[col]).trim() !== "" ? renderDateIfApplicable(col, row[col]) : '-'}</td> );
                             })}
                           </tr>
                         );
                       })
                     ) : (
-                      <tr>
-                        <td colSpan={currentColumns.length + 1} className="px-4 py-12 text-center text-gray-400">
-                          尚未匯入資料或無符合結果
-                        </td>
-                      </tr>
+                      <tr><td colSpan={currentColumns.length + 1} className="px-4 py-12 text-center text-gray-400 italic">目前無資料，請匯入 Excel 或手動新增。</td></tr>
                     )}
-
                     {Object.keys(columnTotals).length > 0 && (
                       <tr className="bg-[#E8ECE9] border-t-2 border-[#8C9B90]">
                         <td className="px-4 py-4 sticky left-0 bg-[#E8ECE9] z-10 border-r border-[#8C9B90]/30 text-center font-bold text-[#4A4A4A]">合計</td>
                         {currentColumns.map((col, i) => {
-                            if (['樓層', '編號', '買方'].includes(col)) {
-                               return <td key={i} className="px-4 py-4 whitespace-nowrap text-sm text-center font-bold text-[#4A4A4A]">-</td>;
-                            }
+                            if (['樓層', '編號', '買方'].includes(col)) return <td key={i} className="px-4 py-4 whitespace-nowrap text-sm text-center font-bold text-[#4A4A4A]">-</td>;
                             const total = columnTotals[col];
-                            return (
-                               <td key={i} className={`px-4 py-4 whitespace-nowrap text-sm text-right font-bold ${col === '成交總價' ? 'text-[#8C9B90] text-base' : 'text-[#4A4A4A]'}`}>
-                                 {total !== undefined ? total.toLocaleString() : '-'}
-                               </td>
-                            );
+                            return ( <td key={i} className={`px-4 py-4 whitespace-nowrap text-sm text-right font-bold ${col === '成交總價' ? 'text-[#8C9B90] text-base' : 'text-[#4A4A4A]'}`}>{total !== undefined ? total.toLocaleString() : '-'}</td> );
                         })}
                       </tr>
                     )}
                   </tbody>
                 </table>
               </div>
-              <div className="p-4 bg-gray-50 text-xs text-gray-400 text-right border-t border-gray-100">
-                共顯示 {combinedData.length} 筆資料
+              <div className="p-4 bg-gray-50 text-[10px] text-gray-400 text-right border-t border-gray-100 flex justify-between items-center">
+                <span>用戶: {user.displayName || user.email}</span>
+                <span>共顯示 {combinedData.length} 筆資料</span>
               </div>
             </div>
           </div>
@@ -661,21 +643,14 @@
                     if(f && u) {
                       const unitKey = `${normStr(f)}_${normStr(u)}`;
                       const existing = customData.units?.[unitKey] || {};
-                      const newCustomUnits = {
-                         ...customData.units,
-                         [unitKey]: { 
-                             ...existing,
-                             基本資料: { 樓層: normStr(f), 編號: normStr(u), 買方: "新客戶", ...(existing.基本資料||{}) } 
-                         }
-                      };
+                      const newCustomUnits = { ...customData.units, [unitKey]: { ...existing, 基本資料: { 樓層: normStr(f), 編號: normStr(u), 買方: "新客戶", ...(existing.基本資料||{}) } } };
                       setCustomData(prev => ({ ...prev, units: newCustomUnits }));
                       if (user) setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'custom', 'additions'), { units: newCustomUnits }, { merge: true });
-                      
                       setShowAddUnitModal(false);
                       openUnitDetails(normStr(f), normStr(u), "新客戶");
                       setIsEditingMode(true);
                     }
-                  }} className="px-4 py-2 bg-[#8C9B90] hover:bg-[#7a8a7e] text-white rounded-lg text-sm transition-colors">建立與進入編輯</button>
+                  }} className="px-4 py-2 bg-[#8C9B90] hover:bg-[#7a8a7e] text-white rounded-lg text-sm transition-colors shadow-sm">建立並進入編輯</button>
                 </div>
               </div>
             </div>
@@ -693,31 +668,18 @@
                     </div>
                     <div>
                       {isEditingMode ? (
-                        <input 
-                          className="text-xl font-bold text-gray-800 border-b border-[#8C9B90] bg-white px-2 py-1 rounded focus:outline-none w-48 sm:w-64" 
-                          value={selectedUnit.基本資料.買方 || ''} 
-                          onChange={(e) => handleUpdateCustomUnit('基本資料', '買方', e.target.value)}
-                          placeholder="請輸入買方姓名"
-                        />
+                        <input className="text-xl font-bold text-gray-800 border-b border-[#8C9B90] bg-white px-2 py-1 rounded focus:outline-none w-48 sm:w-64" value={selectedUnit.基本資料.買方 || ''} onChange={(e) => handleUpdateCustomUnit('基本資料', '買方', e.target.value)} placeholder="請輸入買方姓名" />
                       ) : (
-                        <h2 className="text-xl font-bold text-gray-800">
-                          {selectedUnit.基本資料.買方 ? `${selectedUnit.基本資料.買方} 的專屬資料` : '無獨立買方資料'}
-                        </h2>
+                        <h2 className="text-xl font-bold text-gray-800">{selectedUnit.基本資料.買方 ? `${selectedUnit.基本資料.買方} 的專屬資料` : '無獨立買方資料'}</h2>
                       )}
-                      <p className="text-xs text-gray-400 mt-1">統一檢視與編輯該戶別紀錄</p>
+                      <p className="text-xs text-gray-400 mt-1 italic">所有修改將同步儲存至 Google 雲端帳戶</p>
                     </div>
                   </div>
                   <div className="flex items-center gap-2 self-end sm:self-auto">
-                    <button 
-                      onClick={() => setIsEditingMode(!isEditingMode)}
-                      className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-medium transition-colors ${isEditingMode ? 'bg-orange-100 text-orange-700 hover:bg-orange-200' : 'bg-white border border-gray-200 text-gray-600 hover:bg-gray-50'}`}
-                    >
+                    <button onClick={() => setIsEditingMode(!isEditingMode)} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-medium transition-colors ${isEditingMode ? 'bg-orange-100 text-orange-700 hover:bg-orange-200' : 'bg-white border border-gray-200 text-gray-600 hover:bg-gray-50'}`}>
                       {isEditingMode ? '💾 儲存並退出編輯' : '✏️ 編輯資料'}
                     </button>
-                    <button 
-                      onClick={() => { setSelectedUnit(null); setIsEditingMode(false); }}
-                      className="text-gray-400 hover:text-red-500 hover:bg-red-50 p-2 rounded-full transition-colors"
-                    >
+                    <button onClick={() => { setSelectedUnit(null); setIsEditingMode(false); }} className="text-gray-400 hover:text-red-500 hover:bg-red-50 p-2 rounded-full transition-colors">
                       <X size={24} />
                     </button>
                   </div>
@@ -725,71 +687,41 @@
 
                 <div className="flex-1 overflow-y-auto p-4 sm:p-6 bg-gray-50/50">
                   {(() => {
-                    // 偵測是否具備實際的車位與坪數資料
                     const parkingEntries = Object.entries(selectedUnit.坪數車位 || {}).filter(([key, val]) => !['樓層', '編號', '買方'].includes(key) && !key.startsWith('__EMPTY'));
                     const hasParkingData = parkingEntries.length > 0;
 
                     return (
                       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                        
-                        {/* 如果沒有車位資料且不在編輯模式，讓基本資料卡片自動跨滿 2 欄寬度 (lg:col-span-2) */}
                         <div className={`bg-white p-5 rounded-xl border border-gray-100 shadow-sm relative overflow-hidden ${!hasParkingData && !isEditingMode ? 'lg:col-span-2' : ''}`}>
                           {isEditingMode && <div className="absolute top-0 right-0 bg-orange-100 text-orange-600 text-[10px] px-2 py-0.5 rounded-bl-lg">編輯模式</div>}
-                          <h3 className="flex items-center gap-2 text-sm font-semibold text-[#8C9B90] mb-4 border-b pb-2">
-                            <User size={16} /> 聯絡與基本資料
-                          </h3>
+                          <h3 className="flex items-center gap-2 text-sm font-semibold text-[#8C9B90] mb-4 border-b pb-2"><User size={16} /> 聯絡與基本資料</h3>
                           <div className="space-y-3">
                             {Object.entries(selectedUnit.客戶資料).map(([key, val]) => {
                               if (['樓層', '編號', '買方'].includes(key) || key.startsWith('__EMPTY')) return null;
-                              if (isEditingMode) {
-                                return (
-                                  <div key={key} className="flex flex-col sm:flex-row gap-2 mb-2">
-                                    <input className="sm:w-1/3 bg-gray-50 border border-gray-200 p-1.5 rounded text-sm text-gray-500 outline-none" value={key} readOnly title="欄位名鎖定" />
-                                    <input className="sm:w-2/3 bg-white border border-[#8C9B90] p-1.5 rounded text-sm text-gray-700 focus:ring-1 outline-none" value={val || ''} onChange={(e) => handleUpdateCustomUnit('客戶資料', key, e.target.value)} />
-                                  </div>
-                                );
-                              }
-                              return (
-                                <div key={key} className="flex flex-col sm:flex-row sm:justify-between text-sm">
-                                  <span className="text-gray-400 whitespace-nowrap mr-4">{key}</span>
-                                  <span className="font-medium text-gray-700 sm:text-right whitespace-normal break-words">{renderDateIfApplicable(key, val)}</span>
-                                </div>
-                              );
+                              if (isEditingMode) return ( <div key={key} className="flex flex-col sm:flex-row gap-2 mb-2"> <input className="sm:w-1/3 bg-gray-50 border border-gray-200 p-1.5 rounded text-sm text-gray-500 outline-none" value={key} readOnly /> <input className="sm:w-2/3 bg-white border border-[#8C9B90] p-1.5 rounded text-sm text-gray-700 focus:ring-1 outline-none" value={val || ''} onChange={(e) => handleUpdateCustomUnit('客戶資料', key, e.target.value)} /> </div> );
+                              return ( <div key={key} className="flex flex-col sm:flex-row sm:justify-between text-sm"> <span className="text-gray-400 whitespace-nowrap mr-4">{key}</span> <span className="font-medium text-gray-700 sm:text-right whitespace-normal break-words">{renderDateIfApplicable(key, val)}</span> </div> );
                             })}
                             {Object.keys(selectedUnit.客戶資料).length === 0 && !isEditingMode && <span className="text-sm text-gray-400 italic">無客戶資料紀錄</span>}
                             {isEditingMode && <AddFieldForm category="客戶資料" />}
                           </div>
                         </div>
 
-                        {/* 有資料，或是進入了編輯模式，才顯示產權與車位區塊 */}
                         {(hasParkingData || isEditingMode) && (
                           <div className="bg-white p-5 rounded-xl border border-gray-100 shadow-sm relative overflow-hidden">
                             {isEditingMode && <div className="absolute top-0 right-0 bg-orange-100 text-orange-600 text-[10px] px-2 py-0.5 rounded-bl-lg">編輯模式</div>}
-                            <h3 className="flex items-center gap-2 text-sm font-semibold text-[#8C9B90] mb-4 border-b pb-2">
-                              <Layers size={16} /> 產權與車位配置
-                            </h3>
+                            <h3 className="flex items-center gap-2 text-sm font-semibold text-[#8C9B90] mb-4 border-b pb-2"><Layers size={16} /> 產權與車位配置</h3>
                             {!isEditingMode ? (
                               <div className="grid grid-cols-2 gap-4">
                                 {parkingEntries.map(([key, val]) => {
                                   const style = getCategoryStyle(key);
-                                  return (
-                                    <div key={key} className={`${style.bg} p-3 rounded-lg border ${style.border}`}>
-                                      <div className={`text-xs ${style.isCat ? style.text : 'text-gray-400'} opacity-80 mb-1`}>{key}</div>
-                                      <div className={`text-sm font-medium ${style.isCat ? style.text : 'text-gray-800'}`}>{val !== undefined && val !== null && val !== "" ? renderDateIfApplicable(key, val) : '-'}</div>
-                                    </div>
-                                  );
+                                  return ( <div key={key} className={`${style.bg} p-3 rounded-lg border ${style.border}`}> <div className={`text-xs ${style.isCat ? style.text : 'text-gray-400'} opacity-80 mb-1`}>{key}</div> <div className={`text-sm font-medium ${style.isCat ? style.text : 'text-gray-800'}`}>{val !== undefined && val !== null && val !== "" ? renderDateIfApplicable(key, val) : '-'}</div> </div> );
                                 })}
                               </div>
                             ) : (
                               <div className="space-y-3">
                                  {parkingEntries.map(([key, val]) => {
                                   const style = getCategoryStyle(key);
-                                  return (
-                                    <div key={key} className="flex flex-col sm:flex-row gap-2 mb-2">
-                                      <input className={`sm:w-1/3 ${style.bg} border ${style.border} p-1.5 rounded text-sm ${style.isCat ? style.text : 'text-gray-500'} outline-none`} value={key} readOnly title="欄位名鎖定" />
-                                      <input className={`sm:w-2/3 bg-white border ${style.isCat ? style.border : 'border-[#8C9B90]'} p-1.5 rounded text-sm text-gray-700 focus:ring-1 outline-none`} value={val || ''} onChange={(e) => handleUpdateCustomUnit('坪數車位', key, e.target.value)} />
-                                    </div>
-                                  );
+                                  return ( <div key={key} className="flex flex-col sm:flex-row gap-2 mb-2"> <input className={`sm:w-1/3 ${style.bg} border ${style.border} p-1.5 rounded text-sm ${style.isCat ? style.text : 'text-gray-500'} outline-none`} value={key} readOnly /> <input className={`sm:w-2/3 bg-white border ${style.isCat ? style.border : 'border-[#8C9B90]'} p-1.5 rounded text-sm text-gray-700 focus:ring-1 outline-none`} value={val || ''} onChange={(e) => handleUpdateCustomUnit('坪數車位', key, e.target.value)} /> </div> );
                                 })}
                                 <AddFieldForm category="坪數車位" />
                               </div>
@@ -798,305 +730,115 @@
                         )}
 
                         {selectedUnit.換約紀錄 && selectedUnit.換約紀錄.length > 0 && (
-                              <tr className="text-orange-800 border-b border-orange-200/50">
-                                <th className="py-2 px-4 font-medium whitespace-nowrap">讓渡日期</th>
-                                <th className="py-2 px-4 font-medium whitespace-nowrap">原戶 (姓名)</th>
-                                <th className="py-2 px-4 font-medium whitespace-nowrap">新承接戶</th>
-                                <th className="py-2 px-4 font-medium text-right whitespace-nowrap">讓渡總價</th>
-                                <th className="py-2 px-4 font-medium text-right whitespace-nowrap">換約手續費</th>
-                                <th className="py-2 px-4 font-medium whitespace-nowrap">發票與備註</th>
-                              </tr>
-                            </thead>
-                            <tbody className="divide-y divide-orange-100">
-                              {selectedUnit.換約紀錄.map((record, idx) => {
-                                const transferPriceKey = Object.keys(record).find(k => k.includes('讓渡總價'));
-                                const feeKey = Object.keys(record).find(k => k.includes('手續費'));
-                                const invoiceKey = Object.keys(record).find(k => k.includes('發票'));
-                                
-                                return (
-                                  <tr key={idx} className="hover:bg-orange-100/50 transition-colors">
-                                    <td className="py-3 px-4 text-orange-900 whitespace-nowrap">{renderDateIfApplicable('讓渡日期', record['讓渡日期'])}</td>
-                                    <td className="py-3 px-4 text-gray-500 line-through whitespace-nowrap">{record['姓名'] || record['原戶'] || '-'}</td>
-                                    <td className="py-3 px-4 font-medium text-green-700 whitespace-nowrap">{record['新戶'] || record['新承接戶'] || '-'}</td>
-                                    <td className="py-3 px-4 text-right text-orange-900 whitespace-nowrap">
-                                      {record[transferPriceKey] ? Number(String(record[transferPriceKey]).replace(/,/g, '')).toLocaleString() : '-'}
-                                    </td>
-                                    <td className="py-3 px-4 text-right text-orange-900 whitespace-nowrap">{record[feeKey] || '-'}</td>
-                                    <td className="py-3 px-4 text-orange-800 whitespace-nowrap">
-                                      {record[invoiceKey] ? `發票: ${record[invoiceKey]}` : '-'} {record['備註'] ? `(${record['備註']})` : ''}
-                                    </td>
+                          <div className="bg-orange-50/50 p-5 rounded-xl border border-orange-200 shadow-sm lg:col-span-2">
+                            <h3 className="flex items-center gap-2 text-sm font-semibold text-orange-700 mb-4 border-b border-orange-200 pb-2"><RefreshCw size={16} /> 換約 / 讓渡紀錄 (原住戶變更)</h3>
+                            <div className="overflow-x-auto">
+                              <table className="w-full text-sm text-left border-collapse">
+                                <thead>
+                                  <tr className="text-orange-800 border-b border-orange-200/50">
+                                    <th className="py-2 px-4 font-medium whitespace-nowrap">讓渡日期</th>
+                                    <th className="py-2 px-4 font-medium whitespace-nowrap">原戶 (姓名)</th>
+                                    <th className="py-2 px-4 font-medium whitespace-nowrap">新承接戶</th>
+                                    <th className="py-2 px-4 font-medium text-right whitespace-nowrap">讓渡總價</th>
+                                    <th className="py-2 px-4 font-medium text-right whitespace-nowrap">換約手續費</th>
+                                    <th className="py-2 px-4 font-medium whitespace-nowrap">發票與備註</th>
                                   </tr>
-                                );
-                              })}
-                            </tbody>
-                          </table>
+                                </thead>
+                                <tbody className="divide-y divide-orange-100">
+                                  {selectedUnit.換約紀錄.map((record, idx) => (
+                                    <tr key={idx} className="hover:bg-orange-100/50 transition-colors">
+                                      <td className="py-3 px-4 text-orange-900 whitespace-nowrap">{renderDateIfApplicable('讓渡日期', record['讓渡日期'])}</td>
+                                      <td className="py-3 px-4 text-gray-500 line-through whitespace-nowrap">{record['姓名'] || record['原戶'] || '-'}</td>
+                                      <td className="py-3 px-4 font-medium text-green-700 whitespace-nowrap">{record['新戶'] || record['新承接戶'] || '-'}</td>
+                                      <td className="py-3 px-4 text-right text-orange-900 whitespace-nowrap">{record['讓渡總價'] ? Number(String(record['讓渡總價']).replace(/,/g, '')).toLocaleString() : '-'}</td>
+                                      <td className="py-3 px-4 text-right text-orange-900 whitespace-nowrap">{record['換約手續費0.1%'] || '-'}</td>
+                                      <td className="py-3 px-4 text-orange-800 whitespace-nowrap">{record['發票號碼'] ? `發票: ${record['發票號碼']}` : '-'} {record['備註'] ? `(${record['備註']})` : ''}</td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          </div>
+                        )}
+
+                        <div className="bg-white p-5 rounded-xl border border-gray-100 shadow-sm lg:col-span-2 relative overflow-hidden">
+                          {isEditingMode && <div className="absolute top-0 right-0 bg-orange-100 text-orange-600 text-[10px] px-2 py-0.5 rounded-bl-lg">編輯模式</div>}
+                          <h3 className="flex items-center gap-2 text-sm font-semibold text-[#8C9B90] mb-4 border-b pb-2"><DollarSign size={16} /> 財務款項明細表 (自動沖銷)</h3>
+                          <div className="overflow-x-auto">
+                            <table className="w-full text-sm text-left border-collapse">
+                              <thead>
+                                <tr className="bg-[#F9F9F8] text-gray-500 border-b border-gray-100">
+                                  <th className="py-3 px-4 font-medium whitespace-nowrap">款項期數</th>
+                                  <th className="py-3 px-4 font-medium text-right whitespace-nowrap text-sky-700 bg-sky-50/50">房屋款</th>
+                                  <th className="py-3 px-4 font-medium text-right whitespace-nowrap text-amber-700 bg-amber-50/50">土地款</th>
+                                  {!isEditingMode && ( <> <th className="py-3 px-4 font-medium text-right whitespace-nowrap">應付合計</th> <th className="py-3 px-4 font-medium text-right whitespace-nowrap text-[#8C9B90]">已付金額</th> <th className="py-3 px-4 font-medium text-right whitespace-nowrap">未付餘額</th> <th className="py-3 px-4 font-medium text-center whitespace-nowrap">狀態</th> </> )}
+                                  {isEditingMode && <th className="py-3 px-4 font-medium text-gray-400 whitespace-nowrap" colSpan="4">備註指示</th>}
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-gray-50">
+                                {(() => {
+                                  const house = selectedUnit.財務款項.house || {};
+                                  const land = selectedUnit.財務款項.land || {};
+                                  const totalRemitted = (selectedUnit.匯款紀錄 || []).reduce((sum, record) => { const amtKey = Object.keys(record).find(k => k.includes('金額')) || '匯款金額'; return sum + (parseFloat(String(record[amtKey]).replace(/,/g, '')) || 0); }, 0);
+                                  let currentRemainingRemittance = totalRemitted;
+                                  const stages = [ { key: '成交', label: '成交總價', saveKey: '成交價' }, { key: '訂金', label: '訂金', saveKey: '訂金' }, { key: '簽約', label: '簽約金', saveKey: '應付簽約金' }, { key: '2F', label: '2F工程款', saveKey: '應付2F' }, { key: '5F', label: '5F工程款', saveKey: '應付5F' }, { key: '7F', label: '7F工程款', saveKey: '應付7F' }, { key: '10F', label: '10F工程款', saveKey: '應付10F' }, { key: '13F', label: '13F工程款', saveKey: '應付13F' }, { key: '使照', label: '使照款', saveKey: '應付使照' }, { key: '銀貸', label: '銀行貸款', saveKey: '應付銀貸' }, { key: '交屋', label: '交屋款', saveKey: '應付交屋' } ];
+                                  const getAmount = (dataObj, keyword) => { const actualKey = Object.keys(dataObj).find(k => k.includes(keyword) && (keyword === '成交' ? !k.includes('總價') : true)); if (!actualKey || !dataObj[actualKey]) return 0; return parseFloat(String(dataObj[actualKey]).replace(/,/g, '')) || 0; };
+                                  let hasAnyData = false;
+                                  return stages.map(stage => {
+                                    const houseAmt = getAmount(house, stage.key); const landAmt = getAmount(land, stage.key); const expectedTotal = houseAmt + landAmt;
+                                    if (expectedTotal > 0 || houseAmt > 0 || landAmt > 0) hasAnyData = true;
+                                    const isTotalRow = stage.key === '成交';
+                                    if (isEditingMode) return ( <tr key={stage.key} className="bg-white hover:bg-gray-50 transition-colors"> <td className="py-2 px-4 whitespace-nowrap text-gray-700">{stage.label}</td> <td className="py-2 px-4 bg-sky-50/10"><input type="number" placeholder="0" className="w-full border border-sky-200 p-1.5 rounded text-right text-sm outline-none focus:border-sky-400 focus:ring-1 focus:ring-sky-400" value={houseAmt || ''} onChange={(e) => handleUpdateCustomUnit('house', stage.saveKey, e.target.value ? Number(e.target.value) : '')} /></td> <td className="py-2 px-4 bg-amber-50/10"><input type="number" placeholder="0" className="w-full border border-amber-200 p-1.5 rounded text-right text-sm outline-none focus:border-amber-400 focus:ring-1 focus:ring-amber-400" value={landAmt || ''} onChange={(e) => handleUpdateCustomUnit('land', stage.saveKey, e.target.value ? Number(e.target.value) : '')} /></td> <td colSpan="4" className="py-2 px-4 text-xs text-gray-400 whitespace-nowrap">雲端儲存，關閉編輯後重算</td> </tr> );
+                                    let paidAmt = 0; let isFullyPaid = false; let isPartiallyPaid = false;
+                                    if (!isTotalRow && expectedTotal > 0) { if (currentRemainingRemittance >= expectedTotal) { paidAmt = expectedTotal; isFullyPaid = true; currentRemainingRemittance -= expectedTotal; } else if (currentRemainingRemittance > 0) { paidAmt = currentRemainingRemittance; isPartiallyPaid = true; currentRemainingRemittance = 0; } }
+                                    const unpaidAmt = isTotalRow ? 0 : (expectedTotal - paidAmt);
+                                    let rowBgClass = isTotalRow ? "bg-[#F5F5F0]/50 font-semibold" : isFullyPaid ? "bg-green-50/60 hover:bg-green-50" : isPartiallyPaid ? "bg-orange-50/60 hover:bg-orange-50" : "hover:bg-gray-50/50";
+                                    return ( <tr key={stage.key} className={`${rowBgClass} transition-colors`}> <td className={`py-3 px-4 whitespace-nowrap ${isFullyPaid ? 'text-green-700 font-medium' : 'text-gray-600'}`}>{stage.label}</td> <td className={`py-3 px-4 text-right whitespace-nowrap bg-sky-50/10 ${isTotalRow ? 'text-sky-800' : 'text-sky-700 font-medium'}`}>{houseAmt ? houseAmt.toLocaleString() : '-'}</td> <td className={`py-3 px-4 text-right whitespace-nowrap bg-amber-50/10 ${isTotalRow ? 'text-amber-800' : 'text-amber-700 font-medium'}`}>{landAmt ? landAmt.toLocaleString() : '-'}</td> <td className={`py-3 px-4 text-right whitespace-nowrap ${isTotalRow ? 'text-[#8C9B90] text-base' : 'text-gray-800 font-medium'}`}>{expectedTotal ? expectedTotal.toLocaleString() : '-'}</td> <td className={`py-3 px-4 text-right whitespace-nowrap ${isFullyPaid ? 'text-green-600 font-medium' : isPartiallyPaid ? 'text-orange-600 font-medium' : 'text-gray-400'}`}>{!isTotalRow && paidAmt > 0 ? paidAmt.toLocaleString() : '-'}</td> <td className={`py-3 px-4 text-right whitespace-nowrap ${unpaidAmt > 0 ? 'text-red-500' : 'text-gray-400'}`}>{!isTotalRow && expectedTotal > 0 ? unpaidAmt.toLocaleString() : '-'}</td> <td className="py-3 px-4 text-center whitespace-nowrap">{!isTotalRow && expectedTotal > 0 && ( isFullyPaid ? <span className="inline-block px-2 py-1 bg-green-100 text-green-700 text-xs rounded-full">已結清</span> : isPartiallyPaid ? <span className="inline-block px-2 py-1 bg-orange-100 text-orange-700 text-xs rounded-full">部分付款</span> : <span className="inline-block px-2 py-1 bg-gray-100 text-gray-500 text-xs rounded-full">未付</span> )}</td> </tr> );
+                                  });
+                                })()}
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
+
+                        <div className="bg-white p-5 rounded-xl border border-gray-100 shadow-sm lg:col-span-2 relative overflow-hidden">
+                          <h3 className="flex items-center gap-2 text-sm font-semibold text-[#8C9B90] mb-4 border-b pb-2"><FileText size={16} /> 歷史匯款紀錄明細</h3>
+                          <div className="overflow-x-auto">
+                            <table className="w-full text-sm text-left border-collapse">
+                              <thead>
+                                <tr className="bg-[#F9F9F8] text-gray-500 border-b border-gray-100">
+                                  <th className="py-3 px-4 font-medium whitespace-nowrap">匯款日期</th>
+                                  <th className="py-3 px-4 font-medium text-right whitespace-nowrap">匯款金額 (NT$)</th>
+                                  <th className="py-3 px-4 font-medium whitespace-nowrap bg-blue-50/50">發票日期</th>
+                                  <th className="py-3 px-4 font-medium whitespace-nowrap bg-blue-50/50">發票號碼</th>
+                                  <th className="py-3 px-4 font-medium whitespace-nowrap text-center">操作</th>
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-gray-50">
+                                {selectedUnit.匯款紀錄 && selectedUnit.匯款紀錄.length > 0 ? (
+                                  selectedUnit.匯款紀錄.map((record, idx) => {
+                                    const amtKey = Object.keys(record).find(k => k.includes('金額')) || '匯款金額';
+                                    const dateKey = Object.keys(record).find(k => k.includes('日期')) || '匯款日期';
+                                    const nameKey = Object.keys(record).find(k => k.includes('匯款人')) || '匯款人';
+                                    const amt = parseFloat(String(record[amtKey]).replace(/,/g, '')) || 0;
+                                    const recordKey = record._isCustom ? record.id : `${record['戶別'] || ''}_${record[nameKey] || ''}_${amt}`;
+                                    const cloudData = firebaseInvoices[recordKey] || {};
+                                    if (editingRemitId === record.id) return ( <tr key={idx} className="bg-blue-50/10"> <td className="py-2 px-4 whitespace-nowrap"><input type="date" value={editingRemitData.date} onChange={(e)=>setEditingRemitData({...editingRemitData, date: e.target.value})} className="border border-[#8C9B90] p-1.5 rounded text-sm w-36 outline-none"/></td> <td className="py-2 px-4 whitespace-nowrap"><input type="number" value={editingRemitData.amt} onChange={(e)=>setEditingRemitData({...editingRemitData, amt: e.target.value})} className="border border-[#8C9B90] p-1.5 rounded text-sm w-32 text-right outline-none"/></td> <td colSpan="2" className="py-2 px-4 whitespace-nowrap text-xs text-gray-400">儲存後填寫發票</td> <td className="py-2 px-4 whitespace-nowrap text-center"> <button onClick={() => saveEditRemit(record)} className="text-green-600 font-medium px-2 py-1">儲存</button> <button onClick={() => setEditingRemitId(null)} className="text-gray-400 font-medium px-2 py-1">取消</button> </td> </tr> );
+                                    return ( <tr key={idx} className={`transition-colors ${record._isCustom ? 'bg-blue-50/20 hover:bg-blue-50/50' : 'hover:bg-gray-50/50'}`}> <td className="py-3 px-4 text-gray-700 whitespace-nowrap">{renderDateIfApplicable(dateKey, record[dateKey])} {record._isCustom && <span className="ml-2 text-[10px] bg-blue-100 text-blue-600 px-1 rounded">手動新增</span>}</td> <td className="py-3 px-4 text-right font-medium text-gray-800 whitespace-nowrap">{amt ? amt.toLocaleString() : '-'}</td> <td className="py-2 px-4 whitespace-nowrap"> <input type="date" value={cloudData['發票日期'] || ''} onChange={(e) => handleInvoiceChange(recordKey, '發票日期', e.target.value)} className="px-3 py-1.5 border border-gray-200 rounded-md text-sm focus:ring-[#8C9B90] focus:border-[#8C9B90] text-gray-600 bg-white" /> </td> <td className="py-2 px-4 whitespace-nowrap"> <input type="text" placeholder="發票號碼" value={cloudData['發票號碼'] || ''} onChange={(e) => handleInvoiceChange(recordKey, '發票號碼', e.target.value)} className="px-3 py-1.5 border border-gray-200 rounded-md text-sm focus:ring-[#8C9B90] focus:border-[#8C9B90] w-40 text-gray-600 bg-white placeholder-gray-300" /> </td> <td className="py-2 px-4 whitespace-nowrap text-center text-sm"> {record._isCustom ? ( <> <button onClick={() => startEditRemit(record)} className="text-blue-500 mx-1">✏️</button> <button onClick={() => deleteRemit(record.id)} className="text-red-500 mx-1">🗑️</button> </> ) : <span className="text-gray-300">-</span>} </td> </tr> );
+                                  })
+                                ) : ( <tr><td colSpan="5" className="py-8 text-center text-sm text-gray-400 italic">無匯款紀錄</td></tr> )}
+                                <tr className="bg-blue-50/40 border-t-2 border-blue-100">
+                                   <td className="py-2 px-4"><input id="remit_date" type="date" className="border border-blue-200 p-1.5 rounded text-sm w-36 outline-none"/></td>
+                                   <td className="py-2 px-4"><input id="remit_amt" type="number" placeholder="金額" className="border border-blue-200 p-1.5 rounded text-sm w-full text-right outline-none"/></td>
+                                   <td colSpan="3" className="py-2 px-4"> <button onClick={async () => { const date = document.getElementById('remit_date').value; const amt = document.getElementById('remit_amt').value; if (amt) { const record = { unitKey: `${selectedUnit.基本資料.樓層}_${selectedUnit.基本資料.編號}`, 匯款日期: date.replace(/-/g, '/'), 匯款金額: Number(amt), _isCustom: true, id: Date.now().toString() }; const updatedRemits = [...(customData.remittances || []), record]; setCustomData(prev => ({...prev, remittances: updatedRemits})); setSelectedUnit(prev => ({...prev, 匯款紀錄: [...prev.匯款紀錄, record]})); if(user) await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'custom', 'additions'), { remittances: updatedRemits }, { merge: true }); document.getElementById('remit_date').value = ''; document.getElementById('remit_amt').value = ''; } }} className="bg-blue-500 hover:bg-blue-600 text-white px-3 py-1.5 rounded-lg text-xs font-medium shadow-sm flex items-center gap-1"><Plus size={14}/> 雲端新增匯款</button> </td>
+                                </tr>
+                              </tbody>
+                            </table>
+                          </div>
                         </div>
                       </div>
-                    )}
-
-                    <div className="bg-white p-5 rounded-xl border border-gray-100 shadow-sm lg:col-span-2 relative overflow-hidden">
-                      {isEditingMode && <div className="absolute top-0 right-0 bg-orange-100 text-orange-600 text-[10px] px-2 py-0.5 rounded-bl-lg">編輯模式</div>}
-                      <h3 className="flex items-center gap-2 text-sm font-semibold text-[#8C9B90] mb-4 border-b pb-2">
-                        <DollarSign size={16} /> 財務款項明細表 (自動沖銷)
-                      </h3>
-                      <div className="overflow-x-auto">
-                        <table className="w-full text-sm text-left border-collapse">
-                          <thead>
-                            <tr className="bg-[#F9F9F8] text-gray-500 border-b border-gray-100">
-                              <th className="py-3 px-4 font-medium whitespace-nowrap">款項期數</th>
-                              <th className="py-3 px-4 font-medium text-right whitespace-nowrap text-sky-700 bg-sky-50/50">房屋款</th>
-                              <th className="py-3 px-4 font-medium text-right whitespace-nowrap text-amber-700 bg-amber-50/50">土地款</th>
-                              {!isEditingMode && (
-                                <>
-                                  <th className="py-3 px-4 font-medium text-right whitespace-nowrap">應付合計</th>
-                                  <th className="py-3 px-4 font-medium text-right whitespace-nowrap text-[#8C9B90]">已付金額</th>
-                                  <th className="py-3 px-4 font-medium text-right whitespace-nowrap">未付餘額</th>
-                                  <th className="py-3 px-4 font-medium text-center whitespace-nowrap">狀態</th>
-                                </>
-                              )}
-                              {isEditingMode && <th className="py-3 px-4 font-medium text-gray-400 whitespace-nowrap" colSpan="4">備註指示</th>}
-                            </tr>
-                          </thead>
-                          <tbody className="divide-y divide-gray-50">
-                            {(() => {
-                              const house = selectedUnit.財務款項.house || {};
-                              const land = selectedUnit.財務款項.land || {};
-                              
-                              const totalRemitted = (selectedUnit.匯款紀錄 || []).reduce((sum, record) => {
-                                const amtKey = Object.keys(record).find(k => k.includes('金額')) || '匯款金額';
-                                return sum + (parseFloat(String(record[amtKey]).replace(/,/g, '')) || 0);
-                              }, 0);
-                              
-                              let currentRemainingRemittance = totalRemitted;
-
-                              const stages = [
-                                { key: '成交', label: '成交總價', saveKey: '成交價' },
-                                { key: '訂金', label: '訂金', saveKey: '訂金' },
-                                { key: '簽約', label: '簽約金', saveKey: '應付簽約金' },
-                                { key: '2F', label: '2F工程款', saveKey: '應付2F' },
-                                { key: '5F', label: '5F工程款', saveKey: '應付5F' },
-                                { key: '7F', label: '7F工程款', saveKey: '應付7F' },
-                                { key: '10F', label: '10F工程款', saveKey: '應付10F' },
-                                { key: '13F', label: '13F工程款', saveKey: '應付13F' },
-                                { key: '使照', label: '使照款', saveKey: '應付使照' },
-                                { key: '銀貸', label: '銀行貸款', saveKey: '應付銀貸' },
-                                { key: '交屋', label: '交屋款', saveKey: '應付交屋' }
-                              ];
-
-                              const getAmount = (dataObj, keyword) => {
-                                const actualKey = Object.keys(dataObj).find(k => k.includes(keyword) && (keyword === '成交' ? !k.includes('總價') : true));
-                                if (!actualKey || !dataObj[actualKey]) return 0;
-                                return parseFloat(String(dataObj[actualKey]).replace(/,/g, '')) || 0;
-                              };
-
-                              let hasAnyData = false;
-
-                              const rows = stages.map(stage => {
-                                const houseAmt = getAmount(house, stage.key);
-                                const landAmt = getAmount(land, stage.key);
-                                const expectedTotal = houseAmt + landAmt;
-                                
-                                if (expectedTotal > 0 || houseAmt > 0 || landAmt > 0) hasAnyData = true;
-                                const isTotalRow = stage.key === '成交';
-                                
-                                if (isEditingMode) {
-                                   return (
-                                     <tr key={stage.key} className="bg-white hover:bg-gray-50 transition-colors">
-                                       <td className="py-2 px-4 whitespace-nowrap text-gray-700">{stage.label}</td>
-                                       <td className="py-2 px-4 bg-sky-50/10"><input type="number" placeholder="0" className="w-full border border-sky-200 p-1.5 rounded text-right text-sm outline-none focus:border-sky-400 focus:ring-1 focus:ring-sky-400" value={houseAmt || ''} onChange={(e) => handleUpdateCustomUnit('house', stage.saveKey, e.target.value ? Number(e.target.value) : '')} /></td>
-                                       <td className="py-2 px-4 bg-amber-50/10"><input type="number" placeholder="0" className="w-full border border-amber-200 p-1.5 rounded text-right text-sm outline-none focus:border-amber-400 focus:ring-1 focus:ring-amber-400" value={landAmt || ''} onChange={(e) => handleUpdateCustomUnit('land', stage.saveKey, e.target.value ? Number(e.target.value) : '')} /></td>
-                                       <td colSpan="4" className="py-2 px-4 text-xs text-gray-400 whitespace-nowrap">雲端儲存，關閉編輯後重算</td>
-                                     </tr>
-                                   );
-                                }
-
-                                let paidAmt = 0;
-                                let isFullyPaid = false;
-                                let isPartiallyPaid = false;
-                                
-                                if (!isTotalRow && expectedTotal > 0) {
-                                  if (currentRemainingRemittance >= expectedTotal) {
-                                    paidAmt = expectedTotal;
-                                    isFullyPaid = true;
-                                    currentRemainingRemittance -= expectedTotal;
-                                  } else if (currentRemainingRemittance > 0) {
-                                    paidAmt = currentRemainingRemittance;
-                                    isPartiallyPaid = true;
-                                    currentRemainingRemittance = 0;
-                                  }
-                                }
-                                
-                                const unpaidAmt = isTotalRow ? 0 : (expectedTotal - paidAmt);
-
-                                let rowBgClass = "hover:bg-gray-50/50";
-                                if (isTotalRow) rowBgClass = "bg-[#F5F5F0]/50 font-semibold";
-                                else if (isFullyPaid) rowBgClass = "bg-green-50/60 hover:bg-green-50";
-                                else if (isPartiallyPaid) rowBgClass = "bg-orange-50/60 hover:bg-orange-50";
-
-                                return (
-                                  <tr key={stage.key} className={`${rowBgClass} transition-colors`}>
-                                    <td className={`py-3 px-4 whitespace-nowrap ${isFullyPaid ? 'text-green-700 font-medium' : 'text-gray-600'}`}>{stage.label}</td>
-                                    <td className={`py-3 px-4 text-right whitespace-nowrap bg-sky-50/10 ${isTotalRow ? 'text-sky-800' : 'text-sky-700 font-medium'}`}>
-                                      {houseAmt ? houseAmt.toLocaleString() : '-'}
-                                    </td>
-                                    <td className={`py-3 px-4 text-right whitespace-nowrap bg-amber-50/10 ${isTotalRow ? 'text-amber-800' : 'text-amber-700 font-medium'}`}>
-                                      {landAmt ? landAmt.toLocaleString() : '-'}
-                                    </td>
-                                    <td className={`py-3 px-4 text-right whitespace-nowrap ${isTotalRow ? 'text-[#8C9B90] text-base' : 'text-gray-800 font-medium'}`}>
-                                      {expectedTotal ? expectedTotal.toLocaleString() : '-'}
-                                    </td>
-                                    <td className={`py-3 px-4 text-right whitespace-nowrap ${isFullyPaid ? 'text-green-600 font-medium' : isPartiallyPaid ? 'text-orange-600 font-medium' : 'text-gray-400'}`}>
-                                      {!isTotalRow && paidAmt > 0 ? paidAmt.toLocaleString() : '-'}
-                                    </td>
-                                    <td className={`py-3 px-4 text-right whitespace-nowrap ${unpaidAmt > 0 ? 'text-red-500' : 'text-gray-400'}`}>
-                                      {!isTotalRow && expectedTotal > 0 ? unpaidAmt.toLocaleString() : '-'}
-                                    </td>
-                                    <td className="py-3 px-4 text-center whitespace-nowrap">
-                                      {!isTotalRow && expectedTotal > 0 && (
-                                        isFullyPaid ? <span className="inline-block px-2 py-1 bg-green-100 text-green-700 text-xs rounded-full">已結清</span> :
-                                        isPartiallyPaid ? <span className="inline-block px-2 py-1 bg-orange-100 text-orange-700 text-xs rounded-full">部分付款</span> :
-                                        <span className="inline-block px-2 py-1 bg-gray-100 text-gray-500 text-xs rounded-full">未付</span>
-                                      )}
-                                    </td>
-                                  </tr>
-                                );
-                              });
-
-                              if (!hasAnyData && !isEditingMode) {
-                                return <tr><td colSpan="7" className="py-8 text-center text-sm text-gray-400 italic">無相關款項紀錄</td></tr>;
-                              }
-
-                              return rows;
-                            })()}
-                          </tbody>
-                        </table>
-                      </div>
-                    </div>
-
-                    <div className="bg-white p-5 rounded-xl border border-gray-100 shadow-sm lg:col-span-2 relative overflow-hidden">
-                      <div className="flex justify-between items-center mb-4 border-b pb-2">
-                        <h3 className="flex items-center gap-2 text-sm font-semibold text-[#8C9B90]">
-                          <FileText size={16} /> 歷史匯款紀錄明細
-                        </h3>
-                        <span className="text-xs text-gray-400">所有變更與新增將自動綁定並儲存至 Firebase 雲端</span>
-                      </div>
-                      <div className="overflow-x-auto">
-                        <table className="w-full text-sm text-left border-collapse">
-                          <thead>
-                            <tr className="bg-[#F9F9F8] text-gray-500 border-b border-gray-100">
-                              <th className="py-3 px-4 font-medium whitespace-nowrap">匯款日期</th>
-                              <th className="py-3 px-4 font-medium text-right whitespace-nowrap">匯款金額 (NT$)</th>
-                              <th className="py-3 px-4 font-medium whitespace-nowrap bg-blue-50/50">發票日期</th>
-                              <th className="py-3 px-4 font-medium whitespace-nowrap bg-blue-50/50">發票號碼</th>
-                              <th className="py-3 px-4 font-medium whitespace-nowrap text-center">操作</th>
-                            </tr>
-                          </thead>
-                          <tbody className="divide-y divide-gray-50">
-                            {selectedUnit.匯款紀錄 && selectedUnit.匯款紀錄.length > 0 ? (
-                              selectedUnit.匯款紀錄.map((record, idx) => {
-                                const amtKey = Object.keys(record).find(k => k.includes('金額')) || '匯款金額';
-                                const dateKey = Object.keys(record).find(k => k.includes('日期')) || '匯款日期';
-                                const nameKey = Object.keys(record).find(k => k.includes('匯款人')) || '匯款人';
-                                
-                                const amt = parseFloat(String(record[amtKey]).replace(/,/g, '')) || 0;
-                                const unitStr = record['戶別'] || '';
-                                const nameStr = record[nameKey] || '';
-                                
-                                const recordKey = record._isCustom ? record.id : `${unitStr}_${nameStr}_${amt}`;
-                                const cloudData = firebaseInvoices[recordKey] || {};
-                                const currentInvoiceDate = cloudData['發票日期'] || '';
-                                const currentInvoiceNo = cloudData['發票號碼'] || '';
-                                
-                                if (editingRemitId === record.id) {
-                                   return (
-                                     <tr key={idx} className="bg-blue-50/10">
-                                       <td className="py-2 px-4 whitespace-nowrap"><input type="date" value={editingRemitData.date} onChange={(e)=>setEditingRemitData({...editingRemitData, date: e.target.value})} className="border border-[#8C9B90] p-1.5 rounded text-sm w-36 outline-none"/></td>
-                                       <td className="py-2 px-4 whitespace-nowrap"><input type="number" value={editingRemitData.amt} onChange={(e)=>setEditingRemitData({...editingRemitData, amt: e.target.value})} className="border border-[#8C9B90] p-1.5 rounded text-sm w-32 text-right outline-none"/></td>
-                                       <td colSpan="2" className="py-2 px-4 whitespace-nowrap text-xs text-gray-400">儲存後即可填寫發票資訊</td>
-                                       <td className="py-2 px-4 whitespace-nowrap text-center">
-                                          <button onClick={() => saveEditRemit(record)} className="text-green-600 hover:text-green-800 font-medium px-2 py-1">儲存</button>
-                                          <button onClick={() => setEditingRemitId(null)} className="text-gray-400 hover:text-gray-600 font-medium px-2 py-1">取消</button>
-                                       </td>
-                                     </tr>
-                                   )
-                                }
-
-                                return (
-                                  <tr key={idx} className={`transition-colors ${record._isCustom ? 'bg-blue-50/20 hover:bg-blue-50/50' : 'hover:bg-gray-50/50'}`}>
-                                    <td className="py-3 px-4 text-gray-700 whitespace-nowrap">{renderDateIfApplicable(dateKey, record[dateKey])} {record._isCustom && <span className="ml-2 text-[10px] bg-blue-100 text-blue-600 px-1 rounded">手動新增</span>}</td>
-                                    <td className="py-3 px-4 text-right font-medium text-gray-800 whitespace-nowrap">
-                                      {amt ? amt.toLocaleString() : '-'}
-                                    </td>
-                                    <td className="py-2 px-4 whitespace-nowrap">
-                                      <input 
-                                        type="date" 
-                                        value={currentInvoiceDate} 
-                                        onChange={(e) => handleInvoiceChange(recordKey, '發票日期', e.target.value)}
-                                        className="px-3 py-1.5 border border-gray-200 rounded-md text-sm focus:outline-none focus:ring-1 focus:ring-[#8C9B90] focus:border-[#8C9B90] text-gray-600 bg-white"
-                                      />
-                                    </td>
-                                    <td className="py-2 px-4 whitespace-nowrap">
-                                      <input 
-                                        type="text" 
-                                        placeholder="輸入號碼 (例: AB123...)"
-                                        value={currentInvoiceNo} 
-                                        onChange={(e) => handleInvoiceChange(recordKey, '發票號碼', e.target.value)}
-                                        className="px-3 py-1.5 border border-gray-200 rounded-md text-sm focus:outline-none focus:ring-1 focus:ring-[#8C9B90] focus:border-[#8C9B90] w-40 text-gray-600 bg-white placeholder-gray-300"
-                                      />
-                                    </td>
-                                    <td className="py-2 px-4 whitespace-nowrap text-center text-sm">
-                                      {record._isCustom ? (
-                                        <>
-                                          <button onClick={() => startEditRemit(record)} className="text-blue-500 hover:text-blue-700 mx-1" title="編輯">✏️</button>
-                                          <button onClick={() => deleteRemit(record.id)} className="text-red-500 hover:text-red-700 mx-1" title="刪除">🗑️</button>
-                                        </>
-                                      ) : <span className="text-gray-300">-</span>}
-                                    </td>
-                                  </tr>
-                                );
-                              })
-                            ) : (
-                              <tr>
-                                <td colSpan="5" className="py-8 text-center text-sm text-gray-400 italic">該戶目前無匯款紀錄</td>
-                              </tr>
-                            )}
-                            <tr className="bg-blue-50/40 border-t-2 border-blue-100">
-                               <td className="py-2 px-4"><input id="remit_date" type="date" className="border border-blue-200 p-1.5 rounded text-sm w-36 outline-none focus:border-blue-400" title="匯款日期"/></td>
-                               <td className="py-2 px-4"><input id="remit_amt" type="number" placeholder="金額 (純數字)" className="border border-blue-200 p-1.5 rounded text-sm w-full text-right outline-none focus:border-blue-400"/></td>
-                               <td colSpan="3" className="py-2 px-4">
-                                 <button onClick={async () => {
-                                    const date = document.getElementById('remit_date').value;
-                                    const amt = document.getElementById('remit_amt').value;
-                                    if (amt) {
-                                       const record = {
-                                          unitKey: `${selectedUnit.基本資料.樓層}_${selectedUnit.基本資料.編號}`,
-                                          匯款日期: date.replace(/-/g, '/'),
-                                          匯款金額: Number(amt),
-                                          _isCustom: true,
-                                          id: Date.now().toString()
-                                       };
-                                       const updatedRemittances = [...(customData.remittances || []), record];
-                                       setCustomData(prev => ({...prev, remittances: updatedRemittances}));
-                                       setSelectedUnit(prev => ({...prev, 匯款紀錄: [...prev.匯款紀錄, record]}));
-                                       
-                                       if(user) await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'custom', 'additions'), { remittances: updatedRemittances }, { merge: true });
-                                       
-                                       document.getElementById('remit_date').value = '';
-                                       document.getElementById('remit_amt').value = '';
-                                    }
-                                 }} className="bg-blue-500 hover:bg-blue-600 text-white px-3 py-1.5 rounded-lg text-xs font-medium transition-colors shadow-sm flex items-center gap-1">
-                                    <Plus size={14}/> 雲端新增匯款
-                                 </button>
-                               </td>
-                            </tr>
-                          </tbody>
-                        </table>
-                      </div>
-                    </div>
-
-                  </div>
-                );
-              })()}
+                    );
+                  })()}
                 </div>
               </div>
             </div>
