@@ -54,11 +54,11 @@
     const initialAuthToken = typeof window !== 'undefined' && window.__initial_auth_token ? window.__initial_auth_token : null;
 
     // ==========================================
-    // 欄位強制排序清單 (解決亂跳問題的核心)
+    // 欄位強制排序清單 (已優化標題比對，移除多餘空格)
     // ==========================================
     const MASTER_COLUMN_ORDER = [
       '樓層', '編號', '買方', '成交總價', 
-      '房48%      土52%', '款項種類', '成交價', 
+      '房48%土52%', '房48%      土52%', '款項種類', '成交價', 
       '訂金', '應付簽約金', '應付2F', '應付5F', '應付7F', '應付10F', '應付13F', '應付使照', '應付銀貸', '應付交屋',
       '手機', '郵遞區號', '通訊地址', '備註', '通知寄紙本', '發票寄送',
       '讓渡日期', '戶名', '姓名', '讓渡總價', '合約總價', '換約手續費0.1%', '發票號碼', '新戶'
@@ -68,6 +68,9 @@
     // 輔助函式
     // ==========================================
     const normStr = (s) => String(s || '').trim().replace(/\.0$/, '').toUpperCase();
+    
+    // 移除字串中所有空白，用於排序比對
+    const cleanStr = (s) => String(s || '').replace(/\s+/g, '');
 
     const renderDateIfApplicable = (key, val) => {
       if (val === undefined || val === null || val === '') return '';
@@ -193,7 +196,7 @@
             let hIdx = 0;
             for (let i = 0; i < Math.min(10, rawData.length); i++) {
               const rowStr = rawData[i].join('').toLowerCase();
-              if (rowStr.includes('樓層') || rowStr.includes('編號') || rowStr.includes('戶別') || rowStr.includes('戶名')) {
+              if (rowStr.includes('樓層') || rowStr.includes('編號') || rowStr.includes('戶別')) {
                 hIdx = i; break;
               }
             }
@@ -201,7 +204,7 @@
             const seen = {};
             const headerRow = rawData[hIdx] || [];
             for (let c = 0; c < headerRow.length; c++) {
-               let base = headerRow[c] ? String(headerRow[c]).replace(/[\r\n\s]+/g, '').trim() : `__EMPTY_${c}`;
+               let base = headerRow[c] ? String(headerRow[c]).trim() : `__EMPTY_${c}`;
                let final = base;
                if (seen[final]) { seen[final]++; final = `${final}_${seen[final]}`; } else { seen[final] = 1; }
                cleanHeaders.push(final);
@@ -240,17 +243,6 @@
           setIsLoading(false);
         };
         reader.readAsBinaryString(file);
-      };
-
-      const clearCloudMaster = async () => {
-        if(!confirm("確定要刪除雲端主資料庫嗎？")) return;
-        setCloudStatus("loading");
-        try {
-          const colRef = collection(db, 'artifacts', appId, 'public', 'data', 'master_sheets');
-          const oldDocs = await getDocs(colRef);
-          for (const d of oldDocs.docs) { await deleteDoc(d.ref); }
-          setSheetsData(defaultData); setActiveTab("請點擊右上角匯入 Excel"); setCloudStatus("idle");
-        } catch (e) { setCloudStatus("error"); }
       };
 
       const combinedData = useMemo(() => {
@@ -312,10 +304,13 @@
         });
         let arr = Array.from(cols);
         
-        // 強制欄位順序邏輯 (解決亂跳問題)
+        // 核心排序修正：比對時自動忽略空格
         arr.sort((a, b) => {
-          const idxA = MASTER_COLUMN_ORDER.findIndex(m => a.includes(m));
-          const idxB = MASTER_COLUMN_ORDER.findIndex(m => b.includes(m));
+          const aClean = cleanStr(a);
+          const bClean = cleanStr(b);
+          
+          const idxA = MASTER_COLUMN_ORDER.findIndex(m => aClean.includes(cleanStr(m)) || cleanStr(m).includes(aClean));
+          const idxB = MASTER_COLUMN_ORDER.findIndex(m => bClean.includes(cleanStr(m)) || cleanStr(m).includes(bClean));
           
           if (idxA !== -1 && idxB !== -1) return idxA - idxB;
           if (idxA !== -1) return -1;
@@ -374,7 +369,10 @@
           }
           const matches = sheet.filter(r => normStr(r['樓層']) === tF && normStr(r['編號']) === tU);
           if (matches.length > 0) {
-            if (sN.match(/款項|財務|收款/)) { info.財務款項.house = matches.find(m => Object.values(m).some(v => String(v).includes('房屋'))) || matches[0]; info.財務款項.land = matches.find(m => Object.values(m).some(v => String(v).includes('土地'))) || {}; }
+            if (sN.match(/款項|財務|收款/)) { 
+              info.財務款項.house = matches.find(m => Object.values(m).some(v => String(v).includes('房屋'))) || matches[0]; 
+              info.財務款項.land = matches.find(m => Object.values(m).some(v => String(v).includes('土地'))) || {}; 
+            }
             else if (sN.match(/客戶|聯絡/)) info.客戶資料 = matches[0];
             else info.其他標籤.push({ sheetName: sN, data: matches });
           }
@@ -461,8 +459,9 @@
                         {(!isM || isF) && <td rowSpan={span} className="px-4 py-3 sticky left-0 bg-inherit z-10 border-r text-center align-middle"><button onClick={() => openUnitDetails(unit.f, unit.u, unit.b)} className="text-xs bg-[#D4C9B9] text-white px-3 py-1.5 rounded hover:bg-[#c3b6a3] shadow-sm transition-all active:scale-95">檢視</button></td>}
                         {currentColumns.map((col, i) => {
                           let cls = 'text-gray-600';
+                          const catStyle = getCategoryStyle((col.includes('土地') || col.includes('建物') || col.includes('車位')) ? col : catStr);
                           if (col.includes('買方')) cls = 'font-medium text-[#8C9B90]';
-                          else { const s = getCategoryStyle((col.includes('土地') || col.includes('建物') || col.includes('車位')) ? col : catStr); if (s.isCat) cls = `${s.text} font-medium`; }
+                          else if (catStyle.isCat) cls = `${catStyle.text} font-medium`;
                           
                           if (isM && mergeCols.includes(col)) { 
                             if (!isF) return null; 
@@ -470,7 +469,7 @@
                               <td key={i} rowSpan={span} className={`px-4 py-3 align-middle whitespace-nowrap text-sm ${cls}`}>
                                 {renderDateIfApplicable(col, row[col])}
                                 {col === '編號' && isTransferUnit && (
-                                  <span className="ml-2 px-1.5 py-0.5 bg-orange-100 text-orange-600 text-[9px] font-bold rounded uppercase">換約</span>
+                                  <span className="ml-2 px-1.5 py-0.5 bg-orange-100 text-orange-600 text-[9px] font-bold rounded uppercase tracking-tighter">換約</span>
                                 )}
                               </td>
                             ); 
@@ -479,7 +478,7 @@
                             <td key={i} className={`px-4 py-3 whitespace-nowrap text-sm ${cls}`}>
                               {renderDateIfApplicable(col, row[col])}
                               {col === '編號' && isTransferUnit && !isM && (
-                                <span className="ml-2 px-1.5 py-0.5 bg-orange-100 text-orange-600 text-[9px] font-bold rounded uppercase">換約</span>
+                                <span className="ml-2 px-1.5 py-0.5 bg-orange-100 text-orange-600 text-[9px] font-bold rounded uppercase tracking-tighter">換約</span>
                               )}
                             </td>
                           );
@@ -558,7 +557,7 @@
                                  if(user) await setDoc(doc(db,'artifacts',appId,'public', 'data','custom','additions'), { remittances:uR }, { merge:true });
                                  document.getElementById('remit_date').value = ''; document.getElementById('remit_name').value = ''; document.getElementById('remit_amt').value = '';
                               }
-                           }} className="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2 rounded-xl text-xs font-bold shadow-md transition-all active:scale-95"><Plus size={14}/>新增</button></td>
+                           }} className="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2 rounded-xl text-xs font-bold shadow-md transition-all active:scale-95"><Plus size={14}/>新增匯款</button></td>
                       </tr>
                     </tbody></table></div></div>
                   </div>
