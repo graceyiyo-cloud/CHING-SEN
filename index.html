@@ -311,7 +311,14 @@
             else if (cu.基本資料?.買方) exists['買方'] = cu.基本資料.買方;
           });
         }
-        return base.filter(row => !searchTerm || Object.values(row).some(v => String(v).toLowerCase().includes(searchTerm.toLowerCase())));
+        // 支援搜尋戶別組合，如 2A3
+        return base.filter(row => {
+          if (!searchTerm) return true;
+          const term = searchTerm.toLowerCase();
+          const combinedUnit = `${normStr(row['樓層'])}${normStr(row['編號'])}`.toLowerCase();
+          if (combinedUnit.includes(term)) return true;
+          return Object.values(row).some(v => String(v).toLowerCase().includes(term));
+        });
       }, [sheetsData, activeTab, searchTerm, customData]);
 
       const currentColumns = useMemo(() => {
@@ -673,7 +680,7 @@
                       {currentColumns.map((c, i) => {
                         const isSticky = ['樓層', '編號', '買方', '成交總價'].includes(c);
                         const leftPos = c==='樓層'?'44px':c==='編號'?'89px':c==='買方'?'134px':c==='成交總價'?'244px':'0px';
-                        const colClass = c==='買方'?'col-buyer':c==='成交總價'?'col-total':'';
+                        const colClass = c==='樓層'?'col-floor':c==='編號'?'col-unit':c==='買方'?'col-buyer':c==='成交總價'?'col-total':'';
                         return <th key={i} className={`px-2 py-3 border-b text-center ${colClass} ${isSticky ? 'sticky z-50 bg-[#F9F9F8] border-r sticky-shadow' : ''}`} style={isSticky?{left:leftPos}:{}}>{c}</th>
                       })}
                     </tr>
