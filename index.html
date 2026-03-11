@@ -31,6 +31,7 @@
       max-width: 320px; 
     }
 
+    /* 針對鎖定欄位設定固定寬度，確保 Left Offset 計算精準 */
     .col-action { width: 44px !important; min-width: 44px; }
     .col-floor { width: 45px !important; min-width: 45px; }
     .col-unit { width: 45px !important; min-width: 45px; }
@@ -143,7 +144,7 @@
       const [firebaseInvoices, setFirebaseInvoices] = useState({});
       const [customData, setCustomData] = useState({ units: {}, remittances: [], customChanges: [], deletedImportedRemittances: [] });
 
-      // 新增實收匯款與客變的本地輸入狀態，修復按鈕無反應問題
+      // 本地輸入狀態，用於新增紀錄
       const [remitInput, setRemitInput] = useState({ date: '', amt: '' });
       const [cbInput, setCbInput] = useState({ date: '', note: '', amt: '' });
 
@@ -168,7 +169,7 @@
             setSheetsData(newSheets);
             setCloudStatus("synced");
             const sortedKeys = Object.keys(newSheets).sort((a,b) => a.includes('收款總表') ? -1 : b.includes('收款總表') ? 1 : 0);
-            if (activeTab === "請匯入資料") setActiveTab(sortedKeys[0]);
+            if (activeTab === "請匯入資料" && sortedKeys.length > 0) setActiveTab(sortedKeys[0]);
           }
         });
         return () => { unsubInv(); unsubCustom(); unsubMaster(); };
@@ -183,8 +184,7 @@
           const newData = {};
           wb.SheetNames.forEach(name => {
             if (name.match(/坪數|車位/)) return;
-            const ws = wb.Sheets[name];
-            const rawData = window.XLSX.utils.sheet_to_json(ws, { header: 1, defval: "" });
+            const rawData = window.XLSX.utils.sheet_to_json(wb.Sheets[name], { header: 1, defval: "" });
             if (rawData.length === 0) return;
             let hIdx = 0;
             for (let i = 0; i < Math.min(10, rawData.length); i++) {
@@ -217,7 +217,8 @@
         const seenUnits = new Set();
         const salesTabKey = Object.keys(sheetsData).find(k => k.includes('收款總表'));
         if (salesTabKey) {
-          sheetsData[salesTabKey].forEach(row => {
+          const rows = sheetsData[salesTabKey] || [];
+          rows.forEach(row => {
             const f = normStr(row['樓層']), u = normStr(row['編號']);
             if (f && u && !f.includes('合計')) { 
               const key = `${f}_${u}`;
@@ -233,14 +234,13 @@
         (customData.customChanges || []).forEach(r => { totalSales += Number(r.客變金額) || 0; });
         Object.keys(sheetsData).forEach(name => {
           if (name.includes('匯款') || name.includes('發票')) {
-            sheetsData[name].forEach((row, i) => {
+            const rows = sheetsData[name] || [];
+            rows.forEach((row, i) => {
               const u = parseUnitInfo(row);
               const aK = Object.keys(row).find(k => k.includes('金額')) || '金額';
               const amt = parseFloat(String(row[aK]).replace(/,/g, '')) || 0;
               const id = `${u.f}${u.u}_${amt}_${i}`;
-              if (!(customData.deletedImportedRemittances || []).includes(id)) {
-                totalReceived += amt;
-              }
+              if (!(customData.deletedImportedRemittances || []).includes(id)) totalReceived += amt;
             });
           }
         });
@@ -253,9 +253,10 @@
         if (customData?.units && activeTab.includes('收款總表')) {
           Object.keys(customData.units).forEach(key => {
             const cu = customData.units[key]; if (!cu?.基本資料) return;
-            const exists = base.find(r => normStr(r['樓層']) === normStr(cu.基本資料.樓層) && normStr(r['編號']) === normStr(cu.基本資料.編號));
+            const f = normStr(cu.基本資料.樓層), u = normStr(cu.基本資料.編號);
+            const exists = base.find(r => normStr(r['樓層']) === f && normStr(r['編號']) === u);
             if (!exists) base.push({ '樓層': cu.基本資料.樓層, '編號': cu.基本資料.編號, '買方': cu.基本資料.買方, '_isCustom': true });
-            else if (cu.基本資料.買方) exists['買方'] = cu.基本資料.買方;
+            else if (cu.基本資料?.買方) exists['買方'] = cu.基本資料.買方;
           });
         }
         return base.filter(row => !searchTerm || Object.values(row).some(v => String(v).toLowerCase().includes(searchTerm.toLowerCase())));
@@ -278,10 +279,8 @@
         const keys = new Set();
         Object.keys(sheetsData).forEach(sN => {
           if (sN.match(/換約|讓渡/)) {
-            sheetsData[sN].forEach(row => {
-              const info = parseUnitInfo(row);
-              if (info.f && info.u) keys.add(`${info.f}_${info.u}`);
-            });
+            const rows = sheetsData[sN] || [];
+            rows.forEach(row => { const info = parseUnitInfo(row); if (info.f && info.u) keys.add(`${info.f}_${info.u}`); });
           }
         });
         return keys;
@@ -304,7 +303,7 @@
             if (!isNaN(val)) {
                 if (c === '成交總價') {
                     const uk = `${normStr(row['樓層'])}_${normStr(row['編號'])}`;
-                    if (!seenKeys.has(uk)) { sum += val; seenKeys.add(uk); }
+                    if (uk !== "_" && !seenKeys.has(uk)) { sum += val; seenKeys.add(uk); }
                 } else { sum += val; }
             }
           });
@@ -317,7 +316,7 @@
         const uK = `${tF}_${tU}`;
         const info = { 基本資料: { 樓層: tF, 編號: tU, 買方: dB }, 財務款項: { house: {}, land: {} }, 客戶資料: {}, 匯款紀錄: [], 客變紀錄: [], 換約前手: null };
         Object.keys(sheetsData).forEach(sN => {
-          const sheet = sheetsData[sN];
+          const sheet = sheetsData[sN] || [];
           if (sN.match(/換約|讓渡/)) {
             const swap = sheet.find(r => { const u = parseUnitInfo(r); return u.f === tF && u.u === tU; });
             if (swap) info.換約前手 = { 日期: swap['讓渡日期'], 姓名: swap['姓名'] };
@@ -344,13 +343,14 @@
         });
         if (customData?.units?.[uK]) { 
           const cu = customData.units[uK]; 
-          info.客戶資料 = { ...info.客戶資料, ...cu.客戶資料 }; 
-          info.財務款項.house = { ...info.財務款項.house, ...cu.house }; 
-          info.財務款項.land = { ...info.財務款項.land, ...cu.land }; 
+          if(cu.客戶資料) info.客戶資料 = { ...info.客戶資料, ...cu.客戶資料 }; 
+          if(cu.house) info.財務款項.house = { ...info.財務款項.house, ...cu.house }; 
+          if(cu.land) info.財務款項.land = { ...info.財務款項.land, ...cu.land }; 
           if(cu.基本資料?.買方) info.基本資料.買方 = cu.基本資料.買方;
         }
-        info.匯款紀錄.push(...(customData?.remittances || []).filter(r => r.unitKey === uK).map(r => ({ ...r, _id: r.id, _isCustom: true })));
-        info.客變紀錄 = (customData?.customChanges || []).filter(r => r.unitKey === uK);
+        const rems = (customData.remittances || []).filter(r => r.unitKey === uK).map(r => ({ ...r, _id: r.id, _isCustom: true }));
+        info.匯款紀錄 = [...info.匯款紀錄, ...rems];
+        info.客變紀錄 = (customData.customChanges || []).filter(r => r.unitKey === uK);
         setSelectedUnit(info);
       };
 
@@ -370,7 +370,6 @@
             ...customData.units[uK],
             基本資料: selectedUnit.基本資料,
             客戶資料: selectedUnit.客戶資料,
-            // 儲存修改後的財務款項
             house: selectedUnit.財務款項.house,
             land: selectedUnit.財務款項.land
           } 
@@ -472,7 +471,6 @@
                     })}
                     <tr className="h-10"><td colSpan={currentColumns.length + 1} className="border-none bg-transparent"></td></tr>
                   </tbody>
-                  {/* 固定底欄 (Sticky Footer) - 確保它在視窗最下方邊緣 */}
                   <tfoot className="sticky bottom-0 z-40 bg-[#F1F3F1] font-bold text-[10px] sticky-bottom-shadow">
                     <tr>
                       <td className="px-1 py-3 text-center border-r bg-[#F1F3F1] sticky left-0 z-50">合計</td>
@@ -516,7 +514,7 @@
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-x-10 gap-y-2">
                       {(() => {
                         const items = { ...selectedUnit.客戶資料 };
-                        const zip = items['郵遞區號'], addr = items['通訊地址'];
+                        const zip = items['郵遞區號'] || '', addr = items['通訊地址'] || '';
                         const staticFields = ['樓層','編號','買方'];
                         const fields = Object.entries(items).filter(([k,v]) => !staticFields.includes(normStr(k)) && !k.startsWith('__EMPTY') && !['郵遞區號','通訊地址'].includes(k) && (isEditingMode || (v && String(v).trim() !== ""))).map(([k,v])=>(
                           <div key={k} className="flex justify-between items-center text-xs border-b border-gray-50 pb-1.5">
@@ -553,7 +551,7 @@
                     <div className="overflow-x-auto"><table className="w-full text-[10px] border-separate border-spacing-y-1"><thead><tr className="text-gray-400 font-bold"><th className="text-center py-2">階段</th><th className="text-right px-2">房屋款</th><th className="text-right px-2">土地款</th><th className="text-right px-2">應付合計</th><th className="text-right px-2 text-[#8C9B90]">已收實沖</th><th className="text-right px-2 text-red-500">尚欠餘額</th><th className="text-center">狀態</th></tr></thead><tbody>
                       {(() => {
                         const house = selectedUnit.財務款項.house || {}, land = selectedUnit.財務款項.land || {};
-                        const receipts = selectedUnit.匯款紀錄.reduce((s,r) => s + (parseFloat(String(r[Object.keys(r).find(k=>k.includes('金額'))||'金額']).replace(/,/g,''))||0), 0);
+                        const receipts = (selectedUnit.匯款紀錄 || []).reduce((s,r) => s + (parseFloat(String(r[Object.keys(r).find(k=>k.includes('金額'))||'金額']).replace(/,/g,''))||0), 0);
                         const charges = (selectedUnit.客變紀錄 || []).reduce((s,r) => s + (Number(r.客變金額)||0), 0);
                         let rem = receipts;
                         const stages = [{k:'成交',l:'合約總價'}, {k:'客變',l:'客變費用 (外加)',isC:true}, {k:'訂金',l:'訂金'}, {k:'簽約',l:'簽約金'}, {k:'2F',l:'2F工程'}, {k:'5F',l:'5F工程'}, {k:'7F',l:'7F工程'}, {k:'10F',l:'10F工程'}, {k:'13F',l:'13F工程'}, {k:'使照',l:'使照'}, {k:'銀貸',l:'銀貸'}, {k:'交屋',l:'交屋'}];
@@ -566,6 +564,8 @@
                           }
                           if (exp<=0 && st.k!=='成交') return null;
                           let paid=0; if (st.k!=='成交') { if(rem>=exp) { paid=exp; rem-=exp; } else { paid=rem; rem=0; } }
+                          
+                          // 渲染單行，修復語法錯誤
                           return (
                             <tr key={st.k} className={`${st.k==='成交'?'bg-gray-50':st.isC?'bg-purple-50':paid>=exp?'bg-green-50/70':paid>0?'bg-orange-50/70':'hover:bg-gray-50/30'} rounded-lg transition-all`}>
                                 <td className={`py-2 px-2 font-bold text-center ${st.isC?'text-purple-700':''}`}>{st.l}</td>
@@ -576,7 +576,7 @@
                                             const newHouse = {...selectedUnit.財務款項.house, [key]: e.target.value};
                                             setSelectedUnit({...selectedUnit, 財務款項: {...selectedUnit.財務款項, house: newHouse}});
                                         }}/>
-                                    ) : (hA?hA.toLocaleString():st.isC?'-':'')}
+                                    ) : (hA ? hA.toLocaleString() : (st.isC ? '-' : ''))}
                                 </td>
                                 <td className="text-right px-2 text-amber-700">
                                     {isEditingMode && !st.isC && st.k !== '成交' ? (
@@ -585,7 +585,7 @@
                                             const newLand = {...selectedUnit.財務款項.land, [key]: e.target.value};
                                             setSelectedUnit({...selectedUnit, 財務款項: {...selectedUnit.財務款項, land: newLand}});
                                         }}/>
-                                    ) : (lA?lA.toLocaleString():st.isC?'-':''}
+                                    ) : (lA ? lA.toLocaleString() : (st.isC ? '-' : ''))}
                                 </td>
                                 <td className="text-right px-2 font-bold">{exp?exp.toLocaleString():''}</td>
                                 <td className="text-right px-2 text-green-600 font-bold">{st.k==='成交'?'':paid.toLocaleString()}</td>
@@ -600,7 +600,7 @@
                   <div className="bg-white p-5 rounded-2xl border shadow-sm">
                     <h3 className="text-xs font-bold text-[#8C9B90] mb-4 border-b pb-2 flex items-center gap-2"><FileText size={14}/>匯款紀錄管理</h3>
                     <table className="w-full text-[10px] border-separate border-spacing-y-1"><thead><tr className="text-gray-400 font-bold"><th className="text-center py-2">匯款日期</th><th className="text-right px-2">實收金額</th><th className="text-center">發票日期</th><th className="text-center">發票號碼</th>{isAdmin && <th className="text-center">操作</th>}</tr></thead><tbody>
-                      {selectedUnit.匯款紀錄.map((r,i) => {
+                      {(selectedUnit.匯款紀錄 || []).map((r,i) => {
                         const amt = parseFloat(String(r[Object.keys(r).find(k=>k.includes('金額'))||'金額']).replace(/,/g,''))||0;
                         const rK = r._id;
                         const cD = firebaseInvoices[rK] || {};
@@ -609,7 +609,7 @@
                           if(r._isImported) {
                             await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'custom', 'additions'), { deletedImportedRemittances: arrayUnion(r._id) }, { merge: true });
                           } else {
-                            const uR = customData.remittances.filter(x=>x.id!==r.id);
+                            const uR = (customData.remittances || []).filter(x=>x.id!==r.id);
                             await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'custom', 'additions'), { remittances: uR }, { merge: true });
                           }
                           setSelectedUnit({...selectedUnit, 匯款紀錄: selectedUnit.匯款紀錄.filter(x=>x._id !== r._id)});
@@ -622,10 +622,10 @@
                             <td colSpan="3" className="p-1.5 text-right"><button onClick={async () => {
                                 if(remitInput.amt){
                                     const rec = { unitKey:`${selectedUnit.基本資料.樓層}_${selectedUnit.基本資料.編號}`, 匯款日期:remitInput.date.replace(/-/g,'/'), 匯款金額:Number(remitInput.amt), _isCustom:true, id:Date.now().toString() };
-                                    const newR = [...customData.remittances, rec];
+                                    const newR = [...(customData.remittances || []), rec];
                                     await setDoc(doc(db,'artifacts',appId,'public', 'data','custom','additions'), { remittances:newR }, { merge:true });
-                                    setSelectedUnit({...selectedUnit, 匯款紀錄: [...selectedUnit.匯款紀錄, {...rec, _id: rec.id}]});
-                                    setRemitInput({ date: '', amt: '' }); // 清空輸入
+                                    setSelectedUnit({...selectedUnit, 匯款紀錄: [...selectedUnit.匯款紀錄, {...rec, _id: rec.id, _isCustom: true}]});
+                                    setRemitInput({ date: '', amt: '' });
                                 }
                             }} className="bg-blue-600 text-white px-3 py-1 rounded text-[9px] font-bold shadow-sm hover:bg-blue-700 transition-all active:scale-95">新增實收匯款</button></td>
                         </tr>
@@ -636,7 +636,7 @@
                   <div className="bg-white p-5 rounded-2xl border border-purple-100 shadow-sm">
                     <h3 className="text-xs font-bold text-purple-600 mb-4 border-b pb-2 flex items-center gap-2"><Hammer size={14}/>客變費用管理 (應收帳項)</h3>
                     <table className="w-full text-[10px] border-separate border-spacing-y-1"><thead><tr className="bg-purple-50 text-purple-400 font-bold"><th className="text-center py-2">日期</th><th className="text-center px-2">變更項目</th><th className="text-right px-2">費用金額</th>{isAdmin && <th className="text-center">管理</th>}</tr></thead><tbody>
-                      {selectedUnit.客變紀錄.map((r,i) => (<tr key={i} className="hover:bg-purple-50/30 rounded-lg transition-all"><td className="px-2 py-2 text-center">{r.日期}</td><td className="px-2 py-2 text-center font-medium">{r.備註 || '-'}</td><td className="text-right px-2 font-bold text-purple-700">{Number(r.客變金額).toLocaleString()}</td><td className="text-center">{isAdmin && <button onClick={async ()=>{if(!confirm("刪除客變項目？"))return;const uC=customData.customChanges.filter(x=>x.id!==r.id);await setDoc(doc(db,'artifacts',appId,'public', 'data','custom','additions'), { customChanges:uC }, { merge:true });setSelectedUnit({...selectedUnit, 客變紀錄: uC.filter(x=>x.unitKey === `${selectedUnit.基本資料.樓層}_${selectedUnit.基本資料.編號}`)} );}} className="text-red-300 hover:text-red-500 active:scale-95 transition-all"><Trash2 size={12}/></button>}</td></tr>))}
+                      {(selectedUnit.客變紀錄 || []).map((r,i) => (<tr key={i} className="hover:bg-purple-50/30 rounded-lg transition-all"><td className="px-2 py-2 text-center">{r.日期}</td><td className="px-2 py-2 text-center font-medium">{r.備註 || '-'}</td><td className="text-right px-2 font-bold text-purple-700">{Number(r.客變金額).toLocaleString()}</td><td className="text-center">{isAdmin && <button onClick={async ()=>{if(!confirm("刪除客變項目？"))return;const uC=(customData.customChanges || []).filter(x=>x.id!==r.id);await setDoc(doc(db,'artifacts',appId,'public', 'data','custom','additions'), { customChanges: uC }, { merge:true });setSelectedUnit({...selectedUnit, 客變紀錄: uC.filter(x=>x.unitKey === `${selectedUnit.基本資料.樓層}_${selectedUnit.基本資料.編號}`)} );}} className="text-red-300 hover:text-red-500 active:scale-95 transition-all"><Trash2 size={12}/></button>}</td></tr>))}
                       {isAdmin && (
                         <tr className="bg-purple-50/50 rounded-xl">
                             <td className="p-1.5"><input type="date" className="border rounded text-[9px] w-full p-1 text-center" value={cbInput.date} onChange={e=>setCbInput({...cbInput, date: e.target.value})}/></td>
@@ -645,10 +645,10 @@
                             <td className="p-1.5 text-right"><button onClick={async () => {
                                 if(cbInput.amt){
                                     const rec = { unitKey:`${selectedUnit.基本資料.樓層}_${selectedUnit.基本資料.編號}`, 日期:cbInput.date.replace(/-/g,'/'), 備註:cbInput.note, 客變金額:Number(cbInput.amt), id:Date.now().toString() };
-                                    const newC = [...customData.customChanges, rec];
+                                    const newC = [...(customData.customChanges || []), rec];
                                     await setDoc(doc(db,'artifacts',appId,'public', 'data','custom','additions'), { customChanges:newC }, { merge:true });
                                     setSelectedUnit({...selectedUnit, 客變紀錄: [...selectedUnit.客變紀錄, rec]});
-                                    setCbInput({ date: '', note: '', amt: '' }); // 清空輸入
+                                    setCbInput({ date: '', note: '', amt: '' });
                                 }
                             }} className="bg-purple-600 text-white px-3 py-1 rounded text-[9px] font-bold shadow-sm hover:bg-purple-700 transition-all active:scale-95">新增費用項目</button></td>
                         </tr>
@@ -664,7 +664,7 @@
             const f=document.getElementById('new_u_f').value, u=document.getElementById('new_u_u').value;
             if(f&&u){
               const k=`${normStr(f)}_${normStr(u)}`;
-              const cu={...customData.units, [k]:{ 基本資料:{ 樓層:normStr(f), 編號:normStr(u), 買方: "新客戶" }}};
+              const cu={...(customData.units || {}), [k]:{ 基本資料:{ 樓層:normStr(f), 編號:normStr(u), 買方: "新客戶" }}};
               await setDoc(doc(db,'artifacts',appId,'public', 'data','custom','additions'), {units:cu}, {merge:true});
               setShowAddUnitModal(false);
             }
