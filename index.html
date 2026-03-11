@@ -41,6 +41,11 @@
     .sticky-shadow {
       box-shadow: 1px 0 3px rgba(0,0,0,0.05);
     }
+
+    /* 底部固定欄的陰影，增加立體感 */
+    .sticky-bottom-shadow {
+      box-shadow: 0 -2px 10px rgba(0,0,0,0.05);
+    }
     
     table { table-layout: auto; border-collapse: separate; border-spacing: 0; }
     th, td { border: 1px solid #E5E7EB; }
@@ -383,7 +388,7 @@
               {Object.keys(sheetsData).sort((a,b) => a.includes('收款總表') ? -1 : b.includes('收款總表') ? 1 : 0).map(t => <button key={t} onClick={() => setActiveTab(t)} className={`px-4 py-2 rounded-t-xl font-bold text-[11px] transition-all whitespace-nowrap ${ activeTab === t ? 'bg-white text-[#8C9B90] border-t-2 border-l border-r border-[#8C9B90] shadow-sm' : 'text-gray-400 hover:text-gray-600' }`}>{t}</button>)}
             </div>
             
-            <div className="bg-white rounded-xl shadow-sm border overflow-hidden border-[#D4C9B9]/20">
+            <div className="bg-white rounded-xl shadow-sm border overflow-hidden border-[#D4C9B9]/20 relative">
               <div className="overflow-auto max-h-[65vh] scrollbar-hide">
                 <table className="w-full text-left border-collapse">
                   <thead className="sticky top-0 z-40 bg-[#F9F9F8] text-[10px] font-bold text-gray-500">
@@ -428,18 +433,25 @@
                           </tr>
                         );
                     })}
-                    <tr className="h-6">
+                    <tr className="h-10">
                       <td colSpan={currentColumns.length + 1} className="border-none bg-transparent"></td>
                     </tr>
                   </tbody>
-                  <tfoot className="sticky bottom-0 z-40 bg-[#F1F3F1] font-bold text-[10px]">
+                  {/* 固定底欄 (Sticky Footer) - 確保它在視窗最下方邊緣 */}
+                  <tfoot className="sticky bottom-0 z-40 bg-[#F1F3F1] font-bold text-[10px] sticky-bottom-shadow">
                     <tr>
                       <td className="px-1 py-3 text-center border-r bg-[#F1F3F1] sticky left-0 z-50">合計</td>
                       {currentColumns.map((c, i) => {
                         const isSticky = ['樓層', '編號', '買方', '成交總價'].includes(c);
                         const leftPos = c==='樓層'?'44px':c==='編號'?'89px':c==='買方'?'134px':c==='成交總價'?'244px':'0px';
                         const colClass = c==='買方'?'col-buyer':c==='成交總價'?'col-total':'';
-                        return <td key={i} className={`px-2 py-3 border-r ${colClass} text-right ${isSticky ? 'sticky z-50 bg-[#F1F3F1] border-r' : ''}`} style={isSticky?{left:leftPos}:{}}>{totalsData[c] ? totalsData[c].toLocaleString() : ''}</td>
+                        return (
+                          <td key={i} 
+                              className={`px-2 py-3 border-r ${colClass} text-right ${isSticky ? 'sticky z-50 bg-[#F1F3F1] border-r' : ''}`} 
+                              style={isSticky ? { left: leftPos } : {}}>
+                            {totalsData[c] ? totalsData[c].toLocaleString() : ''}
+                          </td>
+                        );
                       })}
                     </tr>
                   </tfoot>
@@ -512,7 +524,7 @@
                         const amt = parseFloat(String(r[Object.keys(r).find(k=>k.includes('金額'))||'金額']).replace(/,/g,''))||0;
                         const rK = r.id || `${selectedUnit.基本資料.樓層}${selectedUnit.基本資料.編號}_${amt}_${i}`;
                         const cD = firebaseInvoices[rK] || {};
-                        return (<tr key={i} className={`hover:bg-gray-50/50 ${r._isCustom?'bg-blue-50/10':''} rounded-lg transition-all`}><td className="px-2 py-2 text-center">{renderDateIfApplicable('日期',r[Object.keys(r).find(k=>k.includes('日期'))||'日期'])} {r._isCustom && <span className="ml-1 text-[8px] bg-blue-100 text-blue-600 px-1 rounded font-bold">手</span>}</td><td className="text-right px-2 font-bold">{amt.toLocaleString()}</td><td className="px-2"><input type="text" disabled={!isAdmin} className="border-none bg-transparent w-full text-[10px] text-center focus:ring-0" value={cD['發票日期'] || renderDateIfApplicable('發票日期', r['發票日期']) || ''} onChange={e=>handleInvoiceChange(rK,'發票日期',e.target.value)} placeholder="日期"/></td><td className="px-2"><input type="text" disabled={!isAdmin} className="border-none bg-transparent w-full text-[10px] text-center focus:ring-0 font-mono" value={cD['發票號碼'] || r['發票號碼'] || ''} onChange={e=>handleInvoiceChange(rK,'發票號碼',e.target.value)} placeholder="號碼"/></td><td className="text-center">{isAdmin && r._isCustom && <button onClick={async ()=>{if(!confirm("刪除此筆匯款紀錄？"))return;const uR=customData.remittances.filter(x=>x.id!==r.id);if(user)await setDoc(doc(db,'artifacts',appId,'public', 'data','custom','additions'), { remittances:uR }, { merge:true });}} className="text-red-300 hover:text-red-500"><Trash2 size={12}/></button>}</td></tr>);
+                        return (<tr key={i} className={`hover:bg-gray-50/50 ${r._isCustom?'bg-blue-50/10':''} rounded-lg transition-all`}><td className="px-2 py-2 text-center">{renderDateIfApplicable('日期',r[Object.keys(r).find(k=>k.includes('日期'))||'日期'])} {r._isCustom && <span className="ml-1 text-[8px] bg-blue-100 text-blue-600 px-1 rounded font-bold">手</span>}</td><td className="text-right px-2 font-bold">{amt.toLocaleString()}</td><td className="px-2"><input type="text" disabled={!isAdmin} className="border-none bg-transparent w-full text-[10px] text-center focus:ring-0" value={cD['發票日期'] || renderDateIfApplicable('發票日期', r['發票日期']) || ''} onChange={e=>handleInvoiceChange(rK,'發票日期',e.target.value)} placeholder="日期"/></td><td className="px-2"><input type="text" disabled={!isAdmin} className="border-none bg-transparent w-full text-[10px] text-center focus:ring-0 font-mono" value={cD['發票號碼'] || r['發票號碼'] || ''} onChange={e=>handleInvoiceChange(rK,'發票號碼',e.target.value)} placeholder="號碼"/></td><td className="text-center">{isAdmin && r._isCustom && <button onClick={async ()=>{if(!confirm("刪除？"))return;const uR=customData.remittances.filter(x=>x.id!==r.id);if(user)await setDoc(doc(db,'artifacts',appId,'public', 'data','custom','additions'), { remittances:uR }, { merge:true });}} className="text-red-300 hover:text-red-500"><Trash2 size={12}/></button>}</td></tr>);
                       })}
                       {isAdmin && (
                         <tr className="bg-blue-50/20 rounded-xl"><td className="p-1.5"><input id="remit_date" type="date" className="border rounded text-[9px] w-full p-1 text-center"/></td><td className="p-1.5"><input id="remit_amt" type="number" placeholder="金額" className="border rounded text-[9px] w-full p-1 text-right"/></td><td colSpan="3" className="p-1.5 text-right"><button onClick={async () => { const d=document.getElementById('remit_date').value, a=document.getElementById('remit_amt').value; if(a){ const rec = { unitKey:`${selectedUnit.基本資料.樓層}_${selectedUnit.基本資料.編號}`, 匯款日期:d.replace(/-/g,'/'), 匯款金額:Number(a), _isCustom:true, id:Date.now().toString() }; if(user) await setDoc(doc(db,'artifacts',appId,'public', 'data','custom','additions'), { remittances:[...customData.remittances, rec] }, { merge:true }); document.getElementById('remit_date').value=''; document.getElementById('remit_amt').value=''; } }} className="bg-blue-600 text-white px-3 py-1 rounded text-[9px] font-bold shadow-sm hover:bg-blue-700 transition-all">新增實收匯款</button></td></tr>
