@@ -143,6 +143,10 @@
       const [firebaseInvoices, setFirebaseInvoices] = useState({});
       const [customData, setCustomData] = useState({ units: {}, remittances: [], customChanges: [], deletedImportedRemittances: [] });
 
+      // 新增實收匯款與客變的本地輸入狀態，修復按鈕無反應問題
+      const [remitInput, setRemitInput] = useState({ date: '', amt: '' });
+      const [cbInput, setCbInput] = useState({ date: '', note: '', amt: '' });
+
       const isAdmin = useMemo(() => user && user.email === ADMIN_EMAIL, [user]);
 
       useEffect(() => {
@@ -365,7 +369,10 @@
           [uK]: { 
             ...customData.units[uK],
             基本資料: selectedUnit.基本資料,
-            客戶資料: selectedUnit.客戶資料
+            客戶資料: selectedUnit.客戶資料,
+            // 儲存修改後的財務款項
+            house: selectedUnit.財務款項.house,
+            land: selectedUnit.財務款項.land
           } 
         };
         await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'custom', 'additions'), { units: updatedUnits }, { merge: true });
@@ -448,9 +455,11 @@
                                 const leftPos = col==='樓層'?'44px':col==='編號'?'89px':col==='買方'?'134px':col==='成交總價'?'244px':'0px';
                                 const colClass = col==='買方'?'col-buyer':col==='成交總價'?'col-total':'';
                                 if (isSticky && !isF) return null;
+                                
                                 const rawVal = row[col];
                                 const isMeta = ['手機', '日期', '日', '編號', '樓層', '號碼', '郵遞區號', '通訊地址', '備註'].some(ex => col.includes(ex));
                                 const displayVal = isMeta ? renderDateIfApplicable(col, rawVal) : formatNum(rawVal);
+
                                 return (
                                   <td key={i} rowSpan={isSticky?span:1} className={`px-2 py-2 border-r ${colClass} ${getAlignClass(col, row[col])} ${isSticky ? 'sticky z-20 bg-white align-middle' : ''} ${col==='買方'?'font-bold text-[#8C9B90]':''}`} style={isSticky?{left:leftPos}:{}}>
                                     {displayVal}
@@ -463,6 +472,7 @@
                     })}
                     <tr className="h-10"><td colSpan={currentColumns.length + 1} className="border-none bg-transparent"></td></tr>
                   </tbody>
+                  {/* 固定底欄 (Sticky Footer) - 確保它在視窗最下方邊緣 */}
                   <tfoot className="sticky bottom-0 z-40 bg-[#F1F3F1] font-bold text-[10px] sticky-bottom-shadow">
                     <tr>
                       <td className="px-1 py-3 text-center border-r bg-[#F1F3F1] sticky left-0 z-50">合計</td>
@@ -470,7 +480,13 @@
                         const isSticky = ['樓層', '編號', '買方', '成交總價'].includes(c);
                         const leftPos = c==='樓層'?'44px':c==='編號'?'89px':c==='買方'?'134px':c==='成交總價'?'244px':'0px';
                         const colClass = c==='買方'?'col-buyer':c==='成交總價'?'col-total':'';
-                        return <td key={i} className={`px-2 py-3 border-r ${colClass} text-right ${isSticky ? 'sticky z-50 bg-[#F1F3F1] border-r' : ''}`} style={isSticky?{left:leftPos}:{}}>{totalsData[c] ? totalsData[c].toLocaleString() : ''}</td>
+                        return (
+                          <td key={i} 
+                              className={`px-2 py-3 border-r ${colClass} text-right ${isSticky ? 'sticky z-50 bg-[#F1F3F1] border-r' : ''}`} 
+                              style={isSticky ? { left: leftPos } : {}}>
+                            {totalsData[c] ? totalsData[c].toLocaleString() : ''}
+                          </td>
+                        );
                       })}
                     </tr>
                   </tfoot>
@@ -487,7 +503,7 @@
                   <div><h2 className="text-lg font-bold">{isEditingMode ? <input className="border px-2 py-1 rounded" value={selectedUnit.基本資料.買方} onChange={e=>setSelectedUnit({...selectedUnit, 基本資料:{...selectedUnit.基本資料, 買方:e.target.value}})}/> : (selectedUnit.基本資料.買方||'未填寫')}</h2><p className="text-[10px] text-[#8C9B90] uppercase font-bold tracking-widest">{isAdmin ? '管理員模式' : '瀏覽模式'}</p></div></div>
                   <div className="flex gap-3">
                     {isAdmin && (
-                      <button onClick={isEditingMode ? saveClientEdits : ()=>setIsEditingMode(true)} className={`px-4 py-1.5 rounded-full text-xs font-bold transition-all ${isEditingMode?'bg-green-600 text-white shadow-lg':'bg-white border hover:bg-gray-50'}`}>
+                      <button onClick={isEditingMode ? saveClientEdits : ()=>setIsEditingMode(true)} className={`px-4 py-1.5 rounded-full text-xs font-bold transition-all ${isEditingMode?'bg-green-600 text-white shadow-lg scale-105':'bg-white border hover:bg-gray-50'}`}>
                         {isEditingMode ? <span className="flex items-center gap-1"><Save size={14}/>儲存退出</span> : '✏️ 編輯資料'}
                       </button>
                     )}
@@ -543,10 +559,40 @@
                         const stages = [{k:'成交',l:'合約總價'}, {k:'客變',l:'客變費用 (外加)',isC:true}, {k:'訂金',l:'訂金'}, {k:'簽約',l:'簽約金'}, {k:'2F',l:'2F工程'}, {k:'5F',l:'5F工程'}, {k:'7F',l:'7F工程'}, {k:'10F',l:'10F工程'}, {k:'13F',l:'13F工程'}, {k:'使照',l:'使照'}, {k:'銀貸',l:'銀貸'}, {k:'交屋',l:'交屋'}];
                         return stages.map(st => {
                           let exp=0,hA=0,lA=0;
-                          if (st.isC) exp=charges; else { hA=parseFloat(String(house[Object.keys(house).find(x=>x.includes(st.k)&&(st.k==='成交'?!x.includes('總價'):true))]||0).replace(/,/g,''))||0; lA=parseFloat(String(land[Object.keys(land).find(x=>x.includes(st.k)&&(st.k==='成交'?!x.includes('總價'):true))]||0).replace(/,/g,''))||0; exp=hA+lA; }
+                          if (st.isC) exp=charges; else { 
+                            hA=parseFloat(String(house[Object.keys(house).find(x=>x.includes(st.k)&&(st.k==='成交'?!x.includes('總價'):true))]||0).replace(/,/g,''))||0; 
+                            lA=parseFloat(String(land[Object.keys(land).find(x=>x.includes(st.k)&&(st.k==='成交'?!x.includes('總價'):true))]||0).replace(/,/g,''))||0; 
+                            exp=hA+lA; 
+                          }
                           if (exp<=0 && st.k!=='成交') return null;
                           let paid=0; if (st.k!=='成交') { if(rem>=exp) { paid=exp; rem-=exp; } else { paid=rem; rem=0; } }
-                          return (<tr key={st.k} className={`${st.k==='成交'?'bg-gray-50':st.isC?'bg-purple-50':paid>=exp?'bg-green-50/70':paid>0?'bg-orange-50/70':'hover:bg-gray-50/30'} rounded-lg transition-all`}><td className={`py-2 px-2 font-bold text-center ${st.isC?'text-purple-700':''}`}>{st.l}</td><td className="text-right px-2 text-sky-700">{hA?hA.toLocaleString():st.isC?'-':''}</td><td className="text-right px-2 text-amber-700">{lA?lA.toLocaleString():st.isC?'-':''}</td><td className="text-right px-2 font-bold">{exp?exp.toLocaleString():''}</td><td className="text-right px-2 text-green-600 font-bold">{st.k==='成交'?'':paid.toLocaleString()}</td><td className="text-right px-2 text-red-500">{st.k==='成交'?'':(exp-paid).toLocaleString()}</td><td className="text-center px-2">{st.k==='成交'?'':(paid>=exp?<span className={`px-2 py-0.5 rounded-full text-[8px] font-bold ${st.isC?'bg-purple-100 text-purple-700':'bg-green-100 text-green-700'}`}>已清</span>:paid>0?<span className="bg-orange-100 text-orange-700 px-2 py-0.5 rounded-full text-[8px] font-bold">未清</span>:<span className="text-gray-300">待付</span>)}</td></tr>);
+                          return (
+                            <tr key={st.k} className={`${st.k==='成交'?'bg-gray-50':st.isC?'bg-purple-50':paid>=exp?'bg-green-50/70':paid>0?'bg-orange-50/70':'hover:bg-gray-50/30'} rounded-lg transition-all`}>
+                                <td className={`py-2 px-2 font-bold text-center ${st.isC?'text-purple-700':''}`}>{st.l}</td>
+                                <td className="text-right px-2 text-sky-700">
+                                    {isEditingMode && !st.isC && st.k !== '成交' ? (
+                                        <input className="w-20 border rounded px-1 text-right text-xs" value={house[Object.keys(house).find(x=>x.includes(st.k))] || 0} onChange={e=>{
+                                            const key = Object.keys(house).find(x=>x.includes(st.k)) || `應付${st.k}`;
+                                            const newHouse = {...selectedUnit.財務款項.house, [key]: e.target.value};
+                                            setSelectedUnit({...selectedUnit, 財務款項: {...selectedUnit.財務款項, house: newHouse}});
+                                        }}/>
+                                    ) : (hA?hA.toLocaleString():st.isC?'-':'')}
+                                </td>
+                                <td className="text-right px-2 text-amber-700">
+                                    {isEditingMode && !st.isC && st.k !== '成交' ? (
+                                        <input className="w-20 border rounded px-1 text-right text-xs" value={land[Object.keys(land).find(x=>x.includes(st.k))] || 0} onChange={e=>{
+                                            const key = Object.keys(land).find(x=>x.includes(st.k)) || `應付${st.k}`;
+                                            const newLand = {...selectedUnit.財務款項.land, [key]: e.target.value};
+                                            setSelectedUnit({...selectedUnit, 財務款項: {...selectedUnit.財務款項, land: newLand}});
+                                        }}/>
+                                    ) : (lA?lA.toLocaleString():st.isC?'-':''}
+                                </td>
+                                <td className="text-right px-2 font-bold">{exp?exp.toLocaleString():''}</td>
+                                <td className="text-right px-2 text-green-600 font-bold">{st.k==='成交'?'':paid.toLocaleString()}</td>
+                                <td className="text-right px-2 text-red-500">{st.k==='成交'?'':(exp-paid).toLocaleString()}</td>
+                                <td className="text-center px-2">{st.k==='成交'?'':(paid>=exp?<span className={`px-2 py-0.5 rounded-full text-[8px] font-bold ${st.isC?'bg-purple-100 text-purple-700':'bg-green-100 text-green-700'}`}>已清</span>:paid>0?<span className="bg-orange-100 text-orange-700 px-2 py-0.5 rounded-full text-[8px] font-bold">未清</span>:<span className="text-gray-300">待付</span>)}</td>
+                            </tr>
+                          );
                         });
                       })()}
                     </tbody></table></div></div>
@@ -567,19 +613,22 @@
                             await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'custom', 'additions'), { remittances: uR }, { merge: true });
                           }
                           setSelectedUnit({...selectedUnit, 匯款紀錄: selectedUnit.匯款紀錄.filter(x=>x._id !== r._id)});
-                        }} className="text-red-300 hover:text-red-500"><Trash2 size={12}/></button>}</td></tr>);
+                        }} className="text-red-300 hover:text-red-500 transition-all active:scale-95"><Trash2 size={12}/></button>}</td></tr>);
                       })}
                       {isAdmin && (
-                        <tr className="bg-blue-50/20 rounded-xl"><td className="p-1.5"><input id="remit_date" type="date" className="border rounded text-[9px] w-full p-1 text-center"/></td><td className="p-1.5"><input id="remit_amt" type="number" placeholder="金額" className="border rounded text-[9px] w-full p-1 text-right"/></td><td colSpan="3" className="p-1.5 text-right"><button onClick={async () => {
-                          const d=document.getElementById('remit_date').value, a=document.getElementById('remit_amt').value;
-                          if(a){
-                            const rec = { unitKey:`${selectedUnit.基本資料.樓層}_${selectedUnit.基本資料.編號}`, 匯款日期:d.replace(/-/g,'/'), 匯款金額:Number(a), _isCustom:true, id:Date.now().toString() };
-                            const newR = [...customData.remittances, rec];
-                            await setDoc(doc(db,'artifacts',appId,'public', 'data','custom','additions'), { remittances:newR }, { merge:true });
-                            setSelectedUnit({...selectedUnit, 匯款紀錄: [...selectedUnit.匯款紀錄, {...rec, _id: rec.id}]});
-                            document.getElementById('remit_date').value=''; document.getElementById('remit_amt').value='';
-                          }
-                        }} className="bg-blue-600 text-white px-3 py-1 rounded text-[9px] font-bold shadow-sm hover:bg-blue-700 transition-all">新增實收匯款</button></td></tr>
+                        <tr className="bg-blue-50/20 rounded-xl">
+                            <td className="p-1.5"><input type="date" className="border rounded text-[9px] w-full p-1 text-center" value={remitInput.date} onChange={e=>setRemitInput({...remitInput, date: e.target.value})}/></td>
+                            <td className="p-1.5"><input type="number" placeholder="金額" className="border rounded text-[9px] w-full p-1 text-right" value={remitInput.amt} onChange={e=>setRemitInput({...remitInput, amt: e.target.value})}/></td>
+                            <td colSpan="3" className="p-1.5 text-right"><button onClick={async () => {
+                                if(remitInput.amt){
+                                    const rec = { unitKey:`${selectedUnit.基本資料.樓層}_${selectedUnit.基本資料.編號}`, 匯款日期:remitInput.date.replace(/-/g,'/'), 匯款金額:Number(remitInput.amt), _isCustom:true, id:Date.now().toString() };
+                                    const newR = [...customData.remittances, rec];
+                                    await setDoc(doc(db,'artifacts',appId,'public', 'data','custom','additions'), { remittances:newR }, { merge:true });
+                                    setSelectedUnit({...selectedUnit, 匯款紀錄: [...selectedUnit.匯款紀錄, {...rec, _id: rec.id}]});
+                                    setRemitInput({ date: '', amt: '' }); // 清空輸入
+                                }
+                            }} className="bg-blue-600 text-white px-3 py-1 rounded text-[9px] font-bold shadow-sm hover:bg-blue-700 transition-all active:scale-95">新增實收匯款</button></td>
+                        </tr>
                       )}
                     </tbody></table>
                   </div>
@@ -587,18 +636,22 @@
                   <div className="bg-white p-5 rounded-2xl border border-purple-100 shadow-sm">
                     <h3 className="text-xs font-bold text-purple-600 mb-4 border-b pb-2 flex items-center gap-2"><Hammer size={14}/>客變費用管理 (應收帳項)</h3>
                     <table className="w-full text-[10px] border-separate border-spacing-y-1"><thead><tr className="bg-purple-50 text-purple-400 font-bold"><th className="text-center py-2">日期</th><th className="text-center px-2">變更項目</th><th className="text-right px-2">費用金額</th>{isAdmin && <th className="text-center">管理</th>}</tr></thead><tbody>
-                      {selectedUnit.客變紀錄.map((r,i) => (<tr key={i} className="hover:bg-purple-50/30 rounded-lg transition-all"><td className="px-2 py-2 text-center">{r.日期}</td><td className="px-2 py-2 text-center font-medium">{r.備註 || '-'}</td><td className="text-right px-2 font-bold text-purple-700">{Number(r.客變金額).toLocaleString()}</td><td className="text-center">{isAdmin && <button onClick={async ()=>{if(!confirm("刪除客變項目？"))return;const uC=customData.customChanges.filter(x=>x.id!==r.id);await setDoc(doc(db,'artifacts',appId,'public', 'data','custom','additions'), { customChanges:uC }, { merge:true });setSelectedUnit({...selectedUnit, 客變紀錄: uC.filter(x=>x.unitKey === `${selectedUnit.基本資料.樓層}_${selectedUnit.基本資料.編號}`)} );}} className="text-red-300 hover:text-red-500"><Trash2 size={12}/></button>}</td></tr>))}
+                      {selectedUnit.客變紀錄.map((r,i) => (<tr key={i} className="hover:bg-purple-50/30 rounded-lg transition-all"><td className="px-2 py-2 text-center">{r.日期}</td><td className="px-2 py-2 text-center font-medium">{r.備註 || '-'}</td><td className="text-right px-2 font-bold text-purple-700">{Number(r.客變金額).toLocaleString()}</td><td className="text-center">{isAdmin && <button onClick={async ()=>{if(!confirm("刪除客變項目？"))return;const uC=customData.customChanges.filter(x=>x.id!==r.id);await setDoc(doc(db,'artifacts',appId,'public', 'data','custom','additions'), { customChanges:uC }, { merge:true });setSelectedUnit({...selectedUnit, 客變紀錄: uC.filter(x=>x.unitKey === `${selectedUnit.基本資料.樓層}_${selectedUnit.基本資料.編號}`)} );}} className="text-red-300 hover:text-red-500 active:scale-95 transition-all"><Trash2 size={12}/></button>}</td></tr>))}
                       {isAdmin && (
-                        <tr className="bg-purple-50/50 rounded-xl"><td className="p-1.5"><input id="cb_date" type="date" className="border rounded text-[9px] w-full p-1 text-center"/></td><td className="p-1.5"><input id="cb_note" placeholder="項目內容" className="border rounded text-[9px] w-full p-1 text-center"/></td><td className="p-1.5"><input id="cb_amt" type="number" placeholder="費用" className="border rounded text-[9px] w-full p-1 text-right"/></td><td className="p-1.5 text-right"><button onClick={async () => {
-                          const d=document.getElementById('cb_date').value, n=document.getElementById('cb_note').value, a=document.getElementById('cb_amt').value;
-                          if(a){
-                            const rec = { unitKey:`${selectedUnit.基本資料.樓層}_${selectedUnit.基本資料.編號}`, 日期:d.replace(/-/g,'/'), 備註:n, 客變金額:Number(a), id:Date.now().toString() };
-                            const newC = [...customData.customChanges, rec];
-                            await setDoc(doc(db,'artifacts',appId,'public', 'data','custom','additions'), { customChanges:newC }, { merge:true });
-                            setSelectedUnit({...selectedUnit, 客變紀錄: [...selectedUnit.客變紀錄, rec]});
-                            document.getElementById('cb_date').value=''; document.getElementById('cb_note').value=''; document.getElementById('cb_amt').value='';
-                          }
-                        }} className="bg-purple-600 text-white px-3 py-1 rounded text-[9px] font-bold shadow-sm hover:bg-purple-700 transition-all">新增費用項目</button></td></tr>
+                        <tr className="bg-purple-50/50 rounded-xl">
+                            <td className="p-1.5"><input type="date" className="border rounded text-[9px] w-full p-1 text-center" value={cbInput.date} onChange={e=>setCbInput({...cbInput, date: e.target.value})}/></td>
+                            <td className="p-1.5"><input placeholder="項目內容" className="border rounded text-[9px] w-full p-1 text-center" value={cbInput.note} onChange={e=>setCbInput({...cbInput, note: e.target.value})}/></td>
+                            <td className="p-1.5"><input type="number" placeholder="費用" className="border rounded text-[9px] w-full p-1 text-right" value={cbInput.amt} onChange={e=>setCbInput({...cbInput, amt: e.target.value})}/></td>
+                            <td className="p-1.5 text-right"><button onClick={async () => {
+                                if(cbInput.amt){
+                                    const rec = { unitKey:`${selectedUnit.基本資料.樓層}_${selectedUnit.基本資料.編號}`, 日期:cbInput.date.replace(/-/g,'/'), 備註:cbInput.note, 客變金額:Number(cbInput.amt), id:Date.now().toString() };
+                                    const newC = [...customData.customChanges, rec];
+                                    await setDoc(doc(db,'artifacts',appId,'public', 'data','custom','additions'), { customChanges:newC }, { merge:true });
+                                    setSelectedUnit({...selectedUnit, 客變紀錄: [...selectedUnit.客變紀錄, rec]});
+                                    setCbInput({ date: '', note: '', amt: '' }); // 清空輸入
+                                }
+                            }} className="bg-purple-600 text-white px-3 py-1 rounded text-[9px] font-bold shadow-sm hover:bg-purple-700 transition-all active:scale-95">新增費用項目</button></td>
+                        </tr>
                       )}
                     </tbody></table>
                   </div>
