@@ -100,13 +100,9 @@
     // 自動判斷對齊方式：數字金額靠右，文字一律靠左
     const getAlignClass = (key, val) => {
       if (!val || val === '-') return 'text-left';
-      
       const sVal = String(val).replace(/,/g, '');
       const isNum = !isNaN(parseFloat(sVal)) && /^[0-9.-]+$/.test(sVal);
-      
-      // 排除手機、日期、編號等雖然是數字但不屬於金額的欄位
       if (key.includes('手機') || key.includes('日期') || key.includes('日') || key.includes('編號') || key.includes('樓層') || key.includes('號碼') || key.includes('郵遞區號')) return 'text-left';
-      
       return isNum ? 'text-right' : 'text-left';
     };
 
@@ -166,8 +162,7 @@
           const newData = {};
           wb.SheetNames.forEach(name => {
             if (name.match(/坪數|車位/)) return;
-            const ws = wb.Sheets[name];
-            const rawData = window.XLSX.utils.sheet_to_json(ws, { header: 1, defval: "" });
+            const rawData = window.XLSX.utils.sheet_to_json(wb.Sheets[name], { header: 1, defval: "" });
             if (rawData.length === 0) return;
             let hIdx = 0;
             for (let i = 0; i < Math.min(10, rawData.length); i++) {
@@ -180,7 +175,6 @@
             for (let r = hIdx + 1; r < rawData.length; r++) {
               const rowObj = {};
               cleanHeaders.forEach((h, c) => { rowObj[h] = rawData[r][c] || ""; });
-              // 過濾 Excel 本身的合計列
               if (Object.values(rowObj).some(v => String(v).includes('合計') || String(v).includes('總計'))) continue;
               if (Object.values(rowObj).some(v => String(v).trim() !== "")) sheetJson.push(rowObj);
             }
@@ -200,7 +194,6 @@
         let totalSales = 0, totalReceived = 0, soldCount = 0, totalUnitsCount = 0;
         const seenUnits = new Set();
         const salesTabKey = Object.keys(sheetsData).find(k => k.includes('收款總表'));
-        
         if (salesTabKey) {
           sheetsData[salesTabKey].forEach(row => {
             const f = normStr(row['樓層']), u = normStr(row['編號']);
@@ -210,10 +203,7 @@
                 seenUnits.add(key);
                 totalUnitsCount++;
                 const price = parseFloat(String(row['成交總價'] || '').replace(/,/g, ''));
-                if (!isNaN(price) && price > 0) {
-                  totalSales += price;
-                  soldCount++;
-                }
+                if (!isNaN(price) && price > 0) { totalSales += price; soldCount++; }
               }
             }
           });
@@ -257,6 +247,20 @@
         });
       }, [combinedData]);
 
+      // 換約戶別集合
+      const transferUnitKeys = useMemo(() => {
+        const keys = new Set();
+        Object.keys(sheetsData).forEach(sN => {
+          if (sN.match(/換約|讓渡/)) {
+            sheetsData[sN].forEach(row => {
+              const info = parseUnitInfo(row);
+              if (info.f && info.u) keys.add(`${info.f}_${info.u}`);
+            });
+          }
+        });
+        return keys;
+      }, [sheetsData]);
+
       const rowSpans = useMemo(() => {
           const spans = {};
           if (!activeTab.includes('收款總表')) return spans;
@@ -268,18 +272,14 @@
         const t = {};
         currentColumns.forEach(c => {
           if (['樓層', '編號', '買方', '手機', '地址', '備註', '郵遞區號'].some(ex => c.includes(ex))) return;
-          let sum = 0;
-          let seenKeys = new Set();
+          let sum = 0, seenKeys = new Set();
           combinedData.forEach(row => {
             const val = parseFloat(String(row[c] || '').replace(/,/g, ''));
             if (!isNaN(val)) {
-                // 如果是成交總價，只算第一筆（針對合併欄位）
                 if (c === '成交總價') {
                     const uk = `${normStr(row['樓層'])}_${normStr(row['編號'])}`;
                     if (!seenKeys.has(uk)) { sum += val; seenKeys.add(uk); }
-                } else {
-                    sum += val;
-                }
+                } else { sum += val; }
             }
           });
           if (sum !== 0) t[c] = sum;
@@ -289,9 +289,14 @@
 
       const openUnitDetails = (tF, tU, dB) => {
         const uK = `${tF}_${tU}`;
-        const info = { 基本資料: { 樓層: tF, 編號: tU, 買方: dB }, 財務款項: { house: {}, land: {} }, 客戶資料: {}, 匯款紀錄: [], 客變紀錄: [] };
+        const info = { 基本資料: { 樓層: tF, 編號: tU, 買方: dB }, 財務款項: { house: {}, land: {} }, 客戶資料: {}, 匯款紀錄: [], 客變紀錄: [], 換約前手: null };
         Object.keys(sheetsData).forEach(sN => {
           const sheet = sheetsData[sN];
+          // 查找換約詳情
+          if (sN.match(/換約|讓渡/)) {
+            const swap = sheet.find(r => { const u = parseUnitInfo(r); return u.f === tF && u.u === tU; });
+            if (swap) info.換約前手 = { 日期: swap['讓渡日期'], 姓名: swap['姓名'] };
+          }
           if (sN.match(/匯款|發票/)) info.匯款紀錄.push(...sheet.filter(r => { const u = parseUnitInfo(r); return u.f === tF && u.u === tU; }));
           const matches = sheet.filter(r => normStr(r['樓層']) === tF && normStr(r['編號']) === tU);
           if (matches.length > 0) {
@@ -306,6 +311,12 @@
         info.匯款紀錄.push(...(customData?.remittances || []).filter(r => r.unitKey === uK));
         info.客變紀錄 = (customData?.customChanges || []).filter(r => r.unitKey === uK);
         setSelectedUnit(info);
+      };
+
+      const handleInvoiceChange = async (rK, field, val) => {
+        const updated = { ...firebaseInvoices, [rK]: { ...(firebaseInvoices[rK] || {}), [field]: val } };
+        setFirebaseInvoices(updated);
+        if (user) await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'invoices', 'all_invoices'), updated);
       };
 
       return (
@@ -360,19 +371,26 @@
                   </thead>
                   <tbody className="divide-y text-[11px]">
                     {combinedData.map((row, idx) => {
-                        const unitKey = `${normStr(row['樓層'])}_${normStr(row['編號'])}`;
+                        const uInfo = parseUnitInfo(row);
+                        const unitKey = `${uInfo.f}_${uInfo.u}`;
                         const isM = rowSpans[unitKey] > 1;
                         const isF = !isM || idx === 0 || `${normStr(combinedData[idx-1]['樓層'])}_${normStr(combinedData[idx-1]['編號'])}` !== unitKey;
                         const span = rowSpans[unitKey] || 1;
+                        const isTransfer = transferUnitKeys.has(unitKey);
                         return (
                           <tr key={idx} className="hover:bg-gray-50/50 transition-colors">
-                            {isF && <td rowSpan={span} className="px-1 py-2 border-r text-center sticky left-0 bg-white z-30 sticky-shadow align-middle"><button onClick={() => openUnitDetails(parseUnitInfo(row).f, parseUnitInfo(row).u, parseUnitInfo(row).b)} className="text-[9px] bg-[#D4C9B9] text-white px-2 py-1 rounded-md shadow-sm hover:bg-[#8C9B90]">檢視</button></td>}
+                            {isF && <td rowSpan={span} className="px-1 py-2 border-r text-center sticky left-0 bg-white z-30 sticky-shadow align-middle"><button onClick={() => openUnitDetails(uInfo.f, uInfo.u, uInfo.b)} className="text-[9px] bg-[#D4C9B9] text-white px-2 py-1 rounded-md shadow-sm hover:bg-[#8C9B90]">檢視</button></td>}
                             {currentColumns.map((col, i) => {
                                 const isSticky = ['樓層', '編號', '買方', '成交總價'].includes(col);
                                 const leftPos = col==='樓層'?'44px':col==='編號'?'89px':col==='買方'?'134px':col==='成交總價'?'244px':'0px';
                                 const colClass = col==='買方'?'col-buyer':col==='成交總價'?'col-total':'';
                                 if (isSticky && !isF) return null;
-                                return <td key={i} rowSpan={isSticky?span:1} className={`px-2 py-2 border-r ${colClass} ${getAlignClass(col, row[col])} ${isSticky ? 'sticky z-20 bg-white align-middle' : ''} ${col==='買方'?'font-bold text-[#8C9B90]':''}`} style={isSticky?{left:leftPos}:{}}>{renderDateIfApplicable(col, row[col])}</td>
+                                return (
+                                  <td key={i} rowSpan={isSticky?span:1} className={`px-2 py-2 border-r ${colClass} ${getAlignClass(col, row[col])} ${isSticky ? 'sticky z-20 bg-white align-middle' : ''} ${col==='買方'?'font-bold text-[#8C9B90]':''}`} style={isSticky?{left:leftPos}:{}}>
+                                    {renderDateIfApplicable(col, row[col])}
+                                    {col === '編號' && isTransfer && <span className="ml-1 px-1 bg-orange-100 text-orange-600 text-[9px] font-bold rounded">換</span>}
+                                  </td>
+                                );
                             })}
                           </tr>
                         );
@@ -410,6 +428,13 @@
                         const zip = items['郵遞區號'], addr = items['通訊地址'];
                         delete items['郵遞區號']; delete items['通訊地址'];
                         const fields = Object.entries(items).filter(([k,v]) => !['樓層','編號','買方'].includes(normStr(k)) && !k.startsWith('__EMPTY') && v && String(v).trim() !== "").map(([k,v])=>(<div key={k} className="flex justify-between text-xs border-b border-gray-50 pb-1.5"><span className="text-gray-400">{k}</span><span className="font-medium text-left">{renderDateIfApplicable(k,v)}</span></div>));
+                        
+                        // 插入換約詳情
+                        if (selectedUnit.換約前手) {
+                            fields.push(<div key="swap_date" className="flex justify-between text-xs border-b border-gray-50 pb-1.5"><span className="text-orange-500 font-bold">換約日期</span><span className="font-medium text-left">{renderDateIfApplicable('讓渡日期', selectedUnit.換約前手.日期)}</span></div>);
+                            fields.push(<div key="swap_name" className="flex justify-between text-xs border-b border-gray-50 pb-1.5"><span className="text-orange-500 font-bold">換約前手</span><span className="font-medium text-left">{selectedUnit.換約前手.姓名}</span></div>);
+                        }
+                        
                         if (zip || addr) fields.push(<div key="merged" className="flex justify-between text-xs border-b border-gray-50 pb-1.5 md:col-span-2"><span className="text-gray-400">通訊地址</span><span className="font-medium text-left">{zip?`[${zip}] `:''}{addr}</span></div>);
                         return fields;
                       })()}
