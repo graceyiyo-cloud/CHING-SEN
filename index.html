@@ -93,10 +93,12 @@
 
     const normStr = (s) => String(s || '').trim().toUpperCase().replace(/\.0$/, '');
 
+    // 數值格式化（千分位）
     const formatNum = (val) => {
       if (val === undefined || val === null || val === '') return '';
       const sVal = String(val).replace(/,/g, '');
       const num = parseFloat(sVal);
+      // 如果不是數字或包含非數值字元（如日期/電話號碼），則回傳原始內容
       if (isNaN(num) || !/^[0-9.-]+$/.test(sVal)) return val;
       return num.toLocaleString();
     };
@@ -114,11 +116,15 @@
       return sVal;
     };
 
+    // 自動判斷對齊方式：數字金額靠右，文字一律置中
     const getAlignClass = (key, val) => {
       if (!val || val === '-') return 'text-center';
       const sVal = String(val).replace(/,/g, '');
       const isNum = !isNaN(parseFloat(sVal)) && /^[0-9.-]+$/.test(sVal);
+      
+      // 排除手機、日期、編號等雖然是數字但不屬於金額的欄位
       if (key.includes('手機') || key.includes('日期') || key.includes('日') || key.includes('編號') || key.includes('樓層') || key.includes('號碼') || key.includes('郵遞區號')) return 'text-center';
+      
       return isNum ? 'text-right' : 'text-center';
     };
 
@@ -145,6 +151,7 @@
       const [firebaseInvoices, setFirebaseInvoices] = useState({});
       const [customData, setCustomData] = useState({ units: {}, remittances: [], customChanges: [] });
 
+      // 判定當前使用者是否為管理員
       const isAdmin = useMemo(() => {
         return user && user.email === ADMIN_EMAIL;
       }, [user]);
@@ -482,7 +489,7 @@
                         delete items['郵遞區號']; delete items['通訊地址'];
                         const fields = Object.entries(items).filter(([k,v]) => !['樓層','編號','買方'].includes(normStr(k)) && !k.startsWith('__EMPTY') && v && String(v).trim() !== "").map(([k,v])=>(<div key={k} className="flex justify-between text-xs border-b border-gray-50 pb-1.5"><span className="text-gray-400">{k}</span><span className={`font-medium ${getAlignClass(k, v)}`}>{renderDateIfApplicable(k,v)}</span></div>));
                         
-                        if (zip || addr) fields.push(<div key="merged" className="flex justify-between text-xs border-b border-gray-50 pb-1.5 md:col-span-2"><span className="text-gray-400">通訊地址</span><span className="font-medium text-center">{zip?`[${zip}] `:''}{addr}</span></div>);
+                        if (zip || addr) fields.push(<div key="merged" className="flex justify-between text-xs border-b border-gray-50 pb-1.5"><span className="text-gray-400">通訊地址</span><span className="font-medium text-center">{zip?`[${zip}] `:''}{addr}</span></div>);
                         return fields;
                       })()}
                     </div>
