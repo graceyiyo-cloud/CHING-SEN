@@ -56,7 +56,7 @@
   <script type="text/babel" data-type="module">
     import React, { useState, useEffect, useMemo } from 'react';
     import { createRoot } from 'react-dom/client';
-    import { Upload, Search, X, Home, User, Phone, MapPin, FileText, DollarSign, Layers, Cloud, RefreshCw, Plus, LogIn, LogOut, AlertCircle, Trash2, Database, ShieldAlert, ChevronUp, ChevronDown, TrendingUp, CreditCard, Clock, Hammer, PieChart, Save } from 'lucide-react';
+    import { Upload, Search, X, Home, User, Phone, MapPin, FileText, DollarSign, Layers, Cloud, RefreshCw, Plus, LogIn, LogOut, AlertCircle, Trash2, Database, ShieldAlert, ChevronUp, ChevronDown, TrendingUp, CreditCard, Clock, Hammer, PieChart, Save, Lock } from 'lucide-react';
     import { initializeApp } from 'firebase/app';
     import { getAuth, onAuthStateChanged, signInWithCustomToken, GoogleAuthProvider, signInWithPopup, signOut } from 'firebase/auth';
     import { getFirestore, doc, setDoc, getDoc, collection, onSnapshot, deleteDoc, getDocs, updateDoc, arrayUnion } from 'firebase/firestore';
@@ -141,10 +141,11 @@
       const [showAddUnitModal, setShowAddUnitModal] = useState(false);
       const [user, setUser] = useState(null);
       const [cloudStatus, setCloudStatus] = useState("idle"); 
+      const [isAuthLoading, setIsAuthLoading] = useState(true);
       const [firebaseInvoices, setFirebaseInvoices] = useState({});
       const [customData, setCustomData] = useState({ units: {}, remittances: [], customChanges: [], deletedImportedRemittances: [] });
 
-      // 本地輸入狀態，用於新增紀錄
+      // 本地輸入狀態
       const [remitInput, setRemitInput] = useState({ date: '', amt: '' });
       const [cbInput, setCbInput] = useState({ date: '', note: '', amt: '' });
 
@@ -153,7 +154,10 @@
       useEffect(() => {
         const initAuth = async () => { if (initialAuthToken) await signInWithCustomToken(auth, initialAuthToken); };
         initAuth();
-        const unsubscribe = onAuthStateChanged(auth, setUser);
+        const unsubscribe = onAuthStateChanged(auth, (u) => {
+          setUser(u);
+          setIsAuthLoading(false);
+        });
         return () => unsubscribe();
       }, []);
 
@@ -169,11 +173,15 @@
             setSheetsData(newSheets);
             setCloudStatus("synced");
             const sortedKeys = Object.keys(newSheets).sort((a,b) => a.includes('收款總表') ? -1 : b.includes('收款總表') ? 1 : 0);
-            if (activeTab === "請匯入資料" && sortedKeys.length > 0) setActiveTab(sortedKeys[0]);
+            if ((activeTab === "請匯入資料" || activeTab === "請先登入系統") && sortedKeys.length > 0) setActiveTab(sortedKeys[0]);
           }
         });
         return () => { unsubInv(); unsubCustom(); unsubMaster(); };
       }, [user]);
+
+      const handleGoogleLogin = async () => {
+        try { await signInWithPopup(auth, provider); } catch (e) { console.error("Login Error", e); }
+      };
 
       const handleFileUpload = (e) => {
         if (!isAdmin) return;
@@ -184,7 +192,8 @@
           const newData = {};
           wb.SheetNames.forEach(name => {
             if (name.match(/坪數|車位/)) return;
-            const rawData = window.XLSX.utils.sheet_to_json(wb.Sheets[name], { header: 1, defval: "" });
+            const ws = wb.Sheets[name];
+            const rawData = window.XLSX.utils.sheet_to_json(ws, { header: 1, defval: "" });
             if (rawData.length === 0) return;
             let hIdx = 0;
             for (let i = 0; i < Math.min(10, rawData.length); i++) {
@@ -378,6 +387,30 @@
         setIsEditingMode(false);
       };
 
+      // 如果正在檢查登入狀態
+      if (isAuthLoading) {
+        return (
+          <div className="min-h-screen flex items-center justify-center bg-[#F5F5F0]">
+            <RefreshCw className="animate-spin text-[#8C9B90]" size={32} />
+          </div>
+        );
+      }
+
+      // 如果未登入，顯示登入介面
+      if (!user) {
+        return (
+          <div className="min-h-screen flex items-center justify-center bg-[#F5F5F0] p-4">
+            <div className="bg-white p-10 rounded-3xl shadow-2xl w-full max-w-md border border-[#D4C9B9]/20 text-center space-y-8">
+              <div className="flex justify-center"><div className="bg-[#8C9B90] p-4 rounded-2xl text-white shadow-lg"><Lock size={40} /></div></div>
+              <div><h1 className="text-2xl font-bold text-[#4A4A4A]">青森苑 案場管理系統</h1><p className="text-gray-400 text-sm mt-2 font-medium tracking-wide">請登入帳號以存取後台資料</p></div>
+              <button onClick={handleGoogleLogin} className="w-full flex items-center justify-center gap-3 bg-white border border-gray-200 py-3.5 rounded-xl font-bold text-gray-600 hover:bg-gray-50 transition-all shadow-sm active:scale-95"><img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" className="w-5 h-5"/> 使用 Google 帳號登入</button>
+              <p className="text-[10px] text-gray-400 uppercase tracking-widest font-bold">Secure Cloud Synchronization Enabled</p>
+            </div>
+          </div>
+        );
+      }
+
+      // 已登入，顯示主介面
       return (
         <div className="min-h-screen bg-[#F5F5F0] text-[#4A4A4A] pb-10 font-sans">
           <header className="bg-white shadow-sm border-b sticky top-0 z-[60] px-4 py-3 flex justify-between items-center">
@@ -399,9 +432,9 @@
               <div className="flex items-center gap-2 pl-3 border-l ml-1">
                 <div className="flex flex-col items-end">
                   <img src={user?.photoURL || 'https://www.gravatar.com/avatar/0?d=mp'} className="w-7 h-7 rounded-full border shadow-sm" title={user?.email} />
-                  {!isAdmin && user && <span className="text-[8px] text-gray-400 font-bold uppercase">瀏覽模式</span>}
+                  {!isAdmin && <span className="text-[8px] text-gray-400 font-bold uppercase">瀏覽模式</span>}
                 </div>
-                {user ? <button onClick={()=>signOut(auth)} className="p-1.5 text-gray-400 hover:text-red-500"><LogOut size={18} /></button> : <button onClick={()=>signInWithPopup(auth, provider)} className="p-1.5 text-gray-400 hover:text-green-500"><LogIn size={18}/></button>}
+                <button onClick={()=>signOut(auth)} className="p-1.5 text-gray-400 hover:text-red-500 transition-all"><LogOut size={18} /></button>
               </div>
             </div>
           </header>
@@ -471,6 +504,7 @@
                     })}
                     <tr className="h-10"><td colSpan={currentColumns.length + 1} className="border-none bg-transparent"></td></tr>
                   </tbody>
+                  {/* 固定底欄 (Sticky Footer) */}
                   <tfoot className="sticky bottom-0 z-40 bg-[#F1F3F1] font-bold text-[10px] sticky-bottom-shadow">
                     <tr>
                       <td className="px-1 py-3 text-center border-r bg-[#F1F3F1] sticky left-0 z-50">合計</td>
@@ -565,15 +599,14 @@
                           if (exp<=0 && st.k!=='成交') return null;
                           let paid=0; if (st.k!=='成交') { if(rem>=exp) { paid=exp; rem-=exp; } else { paid=rem; rem=0; } }
                           
-                          // 渲染單行，修復語法錯誤
                           return (
                             <tr key={st.k} className={`${st.k==='成交'?'bg-gray-50':st.isC?'bg-purple-50':paid>=exp?'bg-green-50/70':paid>0?'bg-orange-50/70':'hover:bg-gray-50/30'} rounded-lg transition-all`}>
                                 <td className={`py-2 px-2 font-bold text-center ${st.isC?'text-purple-700':''}`}>{st.l}</td>
                                 <td className="text-right px-2 text-sky-700">
                                     {isEditingMode && !st.isC && st.k !== '成交' ? (
                                         <input className="w-20 border rounded px-1 text-right text-xs" value={house[Object.keys(house).find(x=>x.includes(st.k))] || 0} onChange={e=>{
-                                            const key = Object.keys(house).find(x=>x.includes(st.k)) || `應付${st.k}`;
-                                            const newHouse = {...selectedUnit.財務款項.house, [key]: e.target.value};
+                                            const kMatch = Object.keys(house).find(x=>x.includes(st.k)) || `應付${st.k}`;
+                                            const newHouse = {...selectedUnit.財務款項.house, [kMatch]: e.target.value};
                                             setSelectedUnit({...selectedUnit, 財務款項: {...selectedUnit.財務款項, house: newHouse}});
                                         }}/>
                                     ) : (hA ? hA.toLocaleString() : (st.isC ? '-' : ''))}
@@ -581,8 +614,8 @@
                                 <td className="text-right px-2 text-amber-700">
                                     {isEditingMode && !st.isC && st.k !== '成交' ? (
                                         <input className="w-20 border rounded px-1 text-right text-xs" value={land[Object.keys(land).find(x=>x.includes(st.k))] || 0} onChange={e=>{
-                                            const key = Object.keys(land).find(x=>x.includes(st.k)) || `應付${st.k}`;
-                                            const newLand = {...selectedUnit.財務款項.land, [key]: e.target.value};
+                                            const kMatch = Object.keys(land).find(x=>x.includes(st.k)) || `應付${st.k}`;
+                                            const newLand = {...selectedUnit.財務款項.land, [kMatch]: e.target.value};
                                             setSelectedUnit({...selectedUnit, 財務款項: {...selectedUnit.財務款項, land: newLand}});
                                         }}/>
                                     ) : (lA ? lA.toLocaleString() : (st.isC ? '-' : ''))}
