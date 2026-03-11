@@ -132,6 +132,22 @@
       return { f: normStr(f), u: normStr(u), b: String(b || '').trim() };
     };
 
+    // 用於將主表格的欄位對應回期款階段
+    const getStageKeyForColumn = (colName) => {
+      if (!colName) return null;
+      if (colName.includes('訂金')) return '訂金';
+      if (colName.includes('簽約')) return '簽約';
+      if (colName.includes('2F')) return '2F';
+      if (colName.includes('5F')) return '5F';
+      if (colName.includes('7F')) return '7F';
+      if (colName.includes('10F')) return '10F';
+      if (colName.includes('13F')) return '13F';
+      if (colName.includes('使照')) return '使照';
+      if (colName.includes('銀貸')) return '銀貸';
+      if (colName.includes('交屋')) return '交屋';
+      return null;
+    };
+
     // 統一期款階段順序，客變排最前面確保被優先沖銷
     const PAYMENT_STAGES = [
       { k: '客變', l: '客變費用' },
@@ -387,6 +403,51 @@
         return info;
       };
 
+      // 計算每一戶每一期的付款狀態 (用於主表格背景標色)
+      const allUnitsPaymentStatus = useMemo(() => {
+        const statusMap = {};
+        if (!activeTab.includes('收款總表')) return statusMap;
+
+        const seen = new Set();
+        combinedData.forEach(row => {
+            const uInfo = parseUnitInfo(row);
+            const key = `${uInfo.f}_${uInfo.u}`;
+            if (key !== "_" && !seen.has(key) && !uInfo.f.includes('合計')) {
+                seen.add(key);
+                const details = getUnitFullDetails(uInfo.f, uInfo.u, uInfo.b);
+                const house = details.財務款項.house || {};
+                const land = details.財務款項.land || {};
+                const receipts = details.匯款紀錄.reduce((s,r) => s + (parseFloat(String(r[Object.keys(r).find(k=>k.includes('金額'))||'金額']).replace(/,/g,''))||0), 0);
+                const charges = (details.客變紀錄 || []).reduce((s,r) => s + (Number(r.客變金額)||0), 0);
+
+                let rem = receipts;
+                const stageStatus = {};
+
+                PAYMENT_STAGES.forEach(st => {
+                    let exp = 0;
+                    if (st.k === '客變') {
+                        exp = charges;
+                    } else {
+                        const kMatchH = Object.keys(house).find(x=>x.includes(st.k));
+                        const kMatchL = Object.keys(land).find(x=>x.includes(st.k));
+                        const hA = kMatchH ? (parseFloat(String(house[kMatchH]).replace(/,/g,''))||0) : 0;
+                        const lA = kMatchL ? (parseFloat(String(land[kMatchL]).replace(/,/g,''))||0) : 0;
+                        exp = hA + lA;
+                    }
+
+                    let paid = 0;
+                    if (rem >= exp) { paid = exp; rem -= exp; }
+                    else { paid = rem; rem = 0; }
+
+                    stageStatus[st.k] = { exp, paid, unpaid: exp > 0 ? exp - paid : 0 };
+                });
+
+                statusMap[key] = stageStatus;
+            }
+        });
+        return statusMap;
+      }, [combinedData, activeTab, sheetsData, customData]);
+
       const openUnitDetails = (tF, tU, dB) => {
         setSelectedUnit(getUnitFullDetails(tF, tU, dB));
       };
@@ -632,8 +693,20 @@
                                 const isMeta = ['手機', '日期', '日', '編號', '樓層', '號碼', '郵遞區號', '通訊地址', '備註'].some(ex => col.includes(ex));
                                 const displayVal = isMeta ? renderDateIfApplicable(col, rawVal) : formatNum(rawVal);
 
+                                // 針對未付清款項，自動標示紅色背景
+                                const stageKey = getStageKeyForColumn(col);
+                                let isUnpaidStage = false;
+                                if (stageKey && allUnitsPaymentStatus[unitKey]) {
+                                    const status = allUnitsPaymentStatus[unitKey][stageKey];
+                                    // 只要該階段有應付金額且尚未付清，就標註顏色
+                                    if (status && status.exp > 0 && status.unpaid > 0) {
+                                        isUnpaidStage = true;
+                                    }
+                                }
+                                const unpaidStyles = isUnpaidStage ? 'bg-red-50 text-red-600 font-medium' : '';
+
                                 return (
-                                  <td key={i} rowSpan={isSticky?span:1} className={`px-2 py-2 border-r ${colClass} ${getAlignClass(col, row[col])} ${isSticky ? 'sticky z-20 bg-white align-middle' : ''} ${col==='買方'?'font-bold text-[#8C9B90]':''}`} style={isSticky?{left:leftPos}:{}}>
+                                  <td key={i} rowSpan={isSticky?span:1} className={`px-2 py-2 border-r ${colClass} ${getAlignClass(col, row[col])} ${isSticky ? 'sticky z-20 bg-white align-middle' : ''} ${col==='買方'?'font-bold text-[#8C9B90]':''} ${unpaidStyles}`} style={isSticky?{left:leftPos}:{}}>
                                     {displayVal}
                                     {col === '編號' && isTransfer && <span className="ml-1 px-1 bg-orange-100 text-orange-600 text-[9px] font-bold rounded">換</span>}
                                   </td>
@@ -644,6 +717,7 @@
                     })}
                     <tr className="h-10"><td colSpan={currentColumns.length + 1} className="border-none bg-transparent"></td></tr>
                   </tbody>
+                  {/* 固定底欄 (Sticky Footer) */}
                   <tfoot className="sticky bottom-0 z-40 bg-[#F1F3F1] font-bold text-[10px] sticky-bottom-shadow">
                     <tr>
                       <td className="px-1 py-3 text-center border-r bg-[#F1F3F1] sticky left-0 z-50">合計</td>
@@ -720,7 +794,7 @@
                   )}
 
                   <div className="bg-white p-5 rounded-2xl border shadow-sm">
-                    <h3 className="text-xs font-bold text-[#8C9B90] mb-4 border-b pb-2 flex items-center gap-2"><DollarSign size={14}/>財務款項沖銷明細 (合併客變統一試算)</h3>
+                    <h3 className="text-xs font-bold text-[#8C9B90] mb-4 border-b pb-2 flex items-center gap-2"><DollarSign size={14}/>財務款項沖銷明細</h3>
                     <div className="overflow-x-auto"><table className="w-full text-[10px] border-separate border-spacing-y-1"><thead><tr className="text-gray-400 font-bold"><th className="text-center py-2">階段</th><th className="text-right px-2">房屋款</th><th className="text-right px-2">土地款</th><th className="text-right px-2">應付合計</th><th className="text-right px-2 text-[#8C9B90]">已收實沖</th><th className="text-right px-2 text-red-500">尚欠餘額</th><th className="text-center">狀態</th></tr></thead><tbody>
                       {(() => {
                         const house = selectedUnit.財務款項.house || {}, land = selectedUnit.財務款項.land || {};
@@ -728,7 +802,6 @@
                         const charges = (selectedUnit.客變紀錄 || []).reduce((s,r) => s + (Number(r.客變金額)||0), 0);
                         let rem = receipts;
                         
-                        // UI 顯示時加入「成交總價」列於頂部
                         const displayStages = [{k:'成交',l:'合約總價'}, ...PAYMENT_STAGES];
                         
                         return displayStages.map(st => {
@@ -777,7 +850,7 @@
                     </tbody></table></div></div>
 
                   <div className="bg-white p-5 rounded-2xl border shadow-sm">
-                    <h3 className="text-xs font-bold text-[#8C9B90] mb-4 border-b pb-2 flex items-center gap-2"><FileText size={14}/>匯款紀錄管理 (唯一實收錢源)</h3>
+                    <h3 className="text-xs font-bold text-[#8C9B90] mb-4 border-b pb-2 flex items-center gap-2"><FileText size={14}/>匯款紀錄管理</h3>
                     <table className="w-full text-[10px] border-separate border-spacing-y-1"><thead><tr className="text-gray-400 font-bold"><th className="text-center py-2">匯款日期</th><th className="text-right px-2">實收金額</th><th className="text-center">發票日期</th><th className="text-center">發票號碼</th>{isAdmin && <th className="text-center">操作</th>}</tr></thead><tbody>
                       {(selectedUnit.匯款紀錄 || []).map((r,i) => {
                         const amt = parseFloat(String(r[Object.keys(r).find(k=>k.includes('金額'))||'金額']).replace(/,/g,''))||0;
