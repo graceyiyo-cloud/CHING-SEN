@@ -62,7 +62,7 @@
     import { getFirestore, doc, setDoc, getDoc, collection, onSnapshot, deleteDoc, getDocs, updateDoc, arrayUnion } from 'firebase/firestore';
 
     // ==========================================
-    // 權限設定：管理員 Email 帳號
+    // 權限設定：管理員 Email 帳號 (擁有完整權限，且不需在授權名單內)
     // ==========================================
     const ADMIN_EMAIL = "jingchuantw@gmail.com"; 
 
@@ -186,11 +186,15 @@
       const [selectedUnit, setSelectedUnit] = useState(null);
       const [isEditingMode, setIsEditingMode] = useState(false);
       const [showAddUnitModal, setShowAddUnitModal] = useState(false);
+      const [showAuthModal, setShowAuthModal] = useState(false); // 權限管理視窗
+      
       const [user, setUser] = useState(null);
       const [cloudStatus, setCloudStatus] = useState("idle"); 
       const [isAuthLoading, setIsAuthLoading] = useState(true);
+      const [authError, setAuthError] = useState("");
+      
       const [firebaseInvoices, setFirebaseInvoices] = useState({});
-      const [customData, setCustomData] = useState({ units: {}, remittances: [], customChanges: [], deletedImportedRemittances: [] });
+      const [customData, setCustomData] = useState({ units: {}, remittances: [], customChanges: [], deletedImportedRemittances: [], allowedViewers: [] });
 
       // 本地輸入狀態
       const [remitInput, setRemitInput] = useState({ date: '', amt: '' });
@@ -207,7 +211,12 @@
         const initAuth = async () => { if (initialAuthToken) await signInWithCustomToken(auth, initialAuthToken); };
         initAuth();
         const unsubscribe = onAuthStateChanged(auth, (u) => {
-          setUser(u);
+          if (u) {
+            setUser(u);
+            setAuthError("");
+          } else {
+            setUser(null);
+          }
           setIsAuthLoading(false);
         });
         return () => unsubscribe();
@@ -217,7 +226,10 @@
         if (!user) return;
         setCloudStatus("loading");
         const unsubInv = onSnapshot(doc(db, 'artifacts', appId, 'public', 'data', 'invoices', 'all_invoices'), (s) => { if (s.exists()) setFirebaseInvoices(s.data()); });
-        const unsubCustom = onSnapshot(doc(db, 'artifacts', appId, 'public', 'data', 'custom', 'additions'), (s) => { if (s.exists()) setCustomData(s.data()); });
+        const unsubCustom = onSnapshot(doc(db, 'artifacts', appId, 'public', 'data', 'custom', 'additions'), (s) => { 
+            const data = s.exists() ? s.data() : {};
+            setCustomData(data); 
+        });
         const unsubMaster = onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'master_sheets'), (snapshot) => {
           if (!snapshot.empty) {
             const newSheets = {};
@@ -229,10 +241,30 @@
                 .filter(t => !t.includes('匯款及發票明細'))
                 .sort((a,b) => a.includes('收款總表') ? -1 : b.includes('收款總表') ? 1 : 0);
             if ((activeTab === "請匯入資料" || activeTab === "請先登入系統") && sortedKeys.length > 0) setActiveTab(sortedKeys[0]);
+          } else {
+            setCloudStatus("synced");
           }
         });
         return () => { unsubInv(); unsubCustom(); unsubMaster(); };
       }, [user]);
+
+      // 動態權限驗證：當資料庫載入完成後，檢查該登入者是否在授權名單中
+      useEffect(() => {
+          if (user && cloudStatus === "synced" && user.email !== ADMIN_EMAIL) {
+              const allowed = customData?.allowedViewers || [];
+              // 支援舊的字串陣列或是新的物件陣列 [{name, email}]
+              const isAllowed = allowed.some(v => (typeof v === 'string' ? v : v.email) === user.email);
+              
+              if (!isAllowed) {
+                  // 強制登出並顯示錯誤
+                  signOut(auth).then(() => {
+                      setAuthError(`帳號 ${user.email} 未獲授權，請聯絡管理員取得授權。`);
+                  });
+              } else {
+                  setAuthError(""); // 若已被授權，清除錯誤訊息
+              }
+          }
+      }, [user, cloudStatus, customData?.allowedViewers]);
 
       useEffect(() => {
         function handleClickOutside(event) {
@@ -245,6 +277,7 @@
       }, []);
 
       const handleGoogleLogin = async () => {
+        setAuthError("");
         try { await signInWithPopup(auth, provider); } catch (e) { console.error("Login Error", e); }
       };
 
@@ -460,8 +493,8 @@
                     if (st.k === '客變') {
                         exp = charges;
                     } else {
-                        const kMatchH = Object.keys(house).find(x=>x.includes(st.k));
-                        const kMatchL = Object.keys(land).find(x=>x.includes(st.k));
+                        const kMatchH = Object.keys(house).find(x=>x.includes(st.k) && (st.k==='成交'?!x.includes('總價'):true));
+                        const kMatchL = Object.keys(land).find(x=>x.includes(st.k) && (st.k==='成交'?!x.includes('總價'):true));
                         const hA = kMatchH ? (parseFloat(String(house[kMatchH]).replace(/,/g,''))||0) : 0;
                         const lA = kMatchL ? (parseFloat(String(land[kMatchL]).replace(/,/g,''))||0) : 0;
                         exp = hA + lA;
@@ -598,7 +631,7 @@
           );
       };
 
-      if (isAuthLoading) {
+      if (isAuthLoading || (user && cloudStatus === "loading")) {
         return (
           <div className="min-h-screen flex items-center justify-center bg-[#F5F5F0]">
             <RefreshCw className="animate-spin text-[#8C9B90]" size={32} />
@@ -612,6 +645,7 @@
             <div className="bg-white p-10 rounded-3xl shadow-2xl w-full max-w-md border border-[#D4C9B9]/20 text-center space-y-8">
               <div className="flex justify-center"><div className="bg-[#8C9B90] p-4 rounded-2xl text-white shadow-lg"><Lock size={40} /></div></div>
               <div><h1 className="text-2xl font-bold text-[#4A4A4A]">青森苑 案場管理系統</h1><p className="text-gray-400 text-sm mt-2 font-medium tracking-wide">請登入帳號以存取後台資料</p></div>
+              {authError && <div className="bg-red-50 text-red-600 px-4 py-2 rounded-lg text-xs font-bold">{authError}</div>}
               <button onClick={handleGoogleLogin} className="w-full flex items-center justify-center gap-3 bg-white border border-gray-200 py-3.5 rounded-xl font-bold text-gray-600 hover:bg-gray-50 transition-all shadow-sm active:scale-95"><img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" className="w-5 h-5"/> 使用 Google 帳號登入</button>
               <p className="text-[10px] text-gray-400 uppercase tracking-widest font-bold">Secure Cloud Synchronization Enabled</p>
             </div>
@@ -661,7 +695,8 @@
                           </div>
                       )}
                   </div>
-
+                  
+                  <button onClick={() => setShowAuthModal(true)} className="bg-white border border-[#8C9B90] text-[#8C9B90] px-3 py-1.5 rounded-full text-[11px] font-bold hover:bg-[#8C9B90] hover:text-white flex items-center gap-1 shadow-sm transition-all"><ShieldAlert size={12} />權限管理</button>
                   <button onClick={() => setShowAddUnitModal(true)} className="bg-white border border-[#8C9B90] text-[#8C9B90] px-3 py-1.5 rounded-full text-[11px] font-bold hover:bg-[#8C9B90] hover:text-white flex items-center gap-1 shadow-sm transition-all"><Plus size={12} />雲端新增</button>
                   <label className="cursor-pointer bg-[#8C9B90] text-white px-3 py-1.5 rounded-full text-[11px] font-bold flex items-center gap-1 shadow-sm hover:bg-[#7A8A7E] transition-all"><Upload size={12} /> 匯入 Excel<input type="file" accept=".xlsx, .xls, .csv" className="hidden" onChange={handleFileUpload} /></label>
                 </>
@@ -979,6 +1014,74 @@
                       )}
                     </tbody></table>
                   </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* 授權名單管理 Modal */}
+          {showAuthModal && isAdmin && (
+            <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+              <div className="bg-white p-8 rounded-3xl w-full max-w-2xl shadow-2xl flex flex-col max-h-[90vh]">
+                <div className="flex justify-between items-center border-b pb-4 mb-4">
+                  <h3 className="font-bold text-lg text-[#8C9B90] flex items-center gap-2"><ShieldAlert size={20}/>授權名單管理</h3>
+                  <button onClick={() => setShowAuthModal(false)} className="text-gray-400 hover:bg-gray-100 p-2 rounded-full transition-all"><X size={20}/></button>
+                </div>
+                <div className="overflow-y-auto scrollbar-hide flex-1">
+                    <p className="text-xs text-gray-500 mb-4 leading-relaxed">
+                        加入授權名單的 Email 帳號可登入系統（純瀏覽權限）。管理員帳號 ({ADMIN_EMAIL}) 預設擁有完整權限，不需加入授權名單。
+                    </p>
+                    <div className="flex gap-2 mb-6">
+                      <input id="new_auth_name" type="text" placeholder="人員名稱 (選填)" className="border w-1/3 p-2.5 rounded-xl text-sm outline-none focus:ring-2 ring-[#8C9B90]/20" />
+                      <input id="new_auth_email" type="email" placeholder="輸入 Google 帳號 (Email)" className="border flex-1 p-2.5 rounded-xl text-sm outline-none focus:ring-2 ring-[#8C9B90]/20" />
+                      <button onClick={async () => {
+                        const nameInput = document.getElementById('new_auth_name').value.trim();
+                        const emailInput = document.getElementById('new_auth_email').value.trim().toLowerCase();
+                        if(emailInput && emailInput.includes('@')) {
+                          if (emailInput === ADMIN_EMAIL) { alert('此為管理員帳號，不需加入授權名單。'); return; }
+                          const exists = (customData.allowedViewers || []).some(v => (typeof v === 'string' ? v : v.email) === emailInput);
+                          if (exists) { alert('此帳號已在授權名單中。'); return; }
+                          const newList = [...(customData.allowedViewers || []), { name: nameInput, email: emailInput }];
+                          await setDoc(doc(db,'artifacts',appId,'public', 'data','custom','additions'), {allowedViewers: newList}, {merge:true});
+                          document.getElementById('new_auth_name').value = '';
+                          document.getElementById('new_auth_email').value = '';
+                        } else {
+                          alert('請輸入有效的 Email');
+                        }
+                      }} className="bg-[#8C9B90] text-white px-5 py-2.5 rounded-xl text-sm font-bold shadow-md hover:bg-[#7A8A7E] transition-all whitespace-nowrap">加入</button>
+                    </div>
+                    
+                    <div className="border rounded-xl overflow-hidden">
+                      <table className="w-full text-sm text-left">
+                        <thead className="bg-gray-50 text-gray-500 text-xs">
+                          <tr>
+                            <th className="px-4 py-3 font-bold border-b whitespace-nowrap">人員名稱</th>
+                            <th className="px-4 py-3 font-bold border-b w-full">已授權的 Email</th>
+                            <th className="px-4 py-3 text-center font-bold border-b w-16">操作</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y">
+                          {(!customData.allowedViewers || customData.allowedViewers.length === 0) && <tr><td colSpan="3" className="text-center py-6 text-gray-400 text-xs">目前無指定授權對象</td></tr>}
+                          {(customData.allowedViewers || []).map((item, idx) => {
+                            const uEmail = typeof item === 'string' ? item : item.email;
+                            const uName = typeof item === 'string' ? '-' : (item.name || '-');
+                            return (
+                            <tr key={idx} className="hover:bg-gray-50 transition-colors">
+                              <td className="px-4 py-3 font-medium text-gray-600 whitespace-nowrap">{uName}</td>
+                              <td className="px-4 py-3 font-medium text-gray-600">{uEmail}</td>
+                              <td className="px-4 py-3 text-center">
+                                <button onClick={async () => {
+                                  if(!confirm(`確定要移除 ${uName !== '-' ? uName + ' ('+uEmail+')' : uEmail} 的瀏覽權限嗎？\n移除後該帳號將立即被登出。`)) return;
+                                  const newList = customData.allowedViewers.filter(e => (typeof e === 'string' ? e : e.email) !== uEmail);
+                                  await setDoc(doc(db,'artifacts',appId,'public', 'data','custom','additions'), {allowedViewers: newList}, {merge:true});
+                                }} className="text-red-400 hover:text-red-600 transition-all active:scale-95 p-1.5 bg-red-50 hover:bg-red-100 rounded-lg"><Trash2 size={16}/></button>
+                              </td>
+                            </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
                 </div>
               </div>
             </div>
