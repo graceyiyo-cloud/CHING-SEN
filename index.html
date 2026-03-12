@@ -438,8 +438,8 @@
                     if (st.k === '客變') {
                         exp = charges;
                     } else {
-                        const kMatchH = Object.keys(house).find(x=>x.includes(st.k));
-                        const kMatchL = Object.keys(land).find(x=>x.includes(st.k));
+                        const kMatchH = Object.keys(house).find(x=>x.includes(st.k) && (st.k==='成交'?!x.includes('總價'):true));
+                        const kMatchL = Object.keys(land).find(x=>x.includes(st.k) && (st.k==='成交'?!x.includes('總價'):true));
                         const hA = kMatchH ? (parseFloat(String(house[kMatchH]).replace(/,/g,''))||0) : 0;
                         const lA = kMatchL ? (parseFloat(String(land[kMatchL]).replace(/,/g,''))||0) : 0;
                         exp = hA + lA;
@@ -525,8 +525,8 @@
                 if (st.k === '客變') {
                     exp = charges;
                 } else {
-                    const kMatchH = Object.keys(house).find(x=>x.includes(st.k));
-                    const kMatchL = Object.keys(land).find(x=>x.includes(st.k));
+                    const kMatchH = Object.keys(house).find(x=>x.includes(st.k) && (st.k==='成交'?!x.includes('總價'):true));
+                    const kMatchL = Object.keys(land).find(x=>x.includes(st.k) && (st.k==='成交'?!x.includes('總價'):true));
                     const hA = kMatchH ? (parseFloat(String(house[kMatchH]).replace(/,/g,''))||0) : 0; 
                     const lA = kMatchL ? (parseFloat(String(land[kMatchL]).replace(/,/g,''))||0) : 0; 
                     exp = hA + lA;
@@ -812,7 +812,8 @@
                     <h3 className="text-sm font-bold text-[#8C9B90] mb-4 border-b pb-2 flex items-center gap-2"><DollarSign size={16}/>財務款項沖銷明細</h3>
                     <div className="overflow-x-auto"><table className="w-full text-xs border-separate border-spacing-y-1.5"><thead><tr className="text-gray-400 font-bold"><th className="text-center py-2">階段</th><th className="text-right px-2">房屋款</th><th className="text-right px-2">土地款</th><th className="text-right px-2">應付合計</th><th className="text-right px-2 text-[#8C9B90]">已收實沖</th><th className="text-right px-2 text-red-500">尚欠餘額</th><th className="text-center">狀態</th></tr></thead><tbody>
                       {(() => {
-                        const house = selectedUnit.財務款項.house || {}, land = selectedUnit.財務款項.land || {};
+                        const house = selectedUnit.財務款項.house || {};
+                        const land = selectedUnit.財務款項.land || {};
                         const receipts = (selectedUnit.匯款紀錄 || []).reduce((s,r) => s + (parseFloat(String(r[Object.keys(r).find(k=>k.includes('金額'))||'金額']).replace(/,/g,''))||0), 0);
                         const charges = (selectedUnit.客變紀錄 || []).reduce((s,r) => s + (Number(r.客變金額)||0), 0);
                         let rem = receipts;
@@ -824,8 +825,8 @@
                           if (st.k === '客變') {
                               exp=charges; 
                           } else { 
-                            const kMatchH = Object.keys(house).find(x=>x.includes(st.k));
-                            const kMatchL = Object.keys(land).find(x=>x.includes(st.k));
+                            const kMatchH = Object.keys(house).find(x=>x.includes(st.k) && (st.k==='成交'?!x.includes('總價'):true));
+                            const kMatchL = Object.keys(land).find(x=>x.includes(st.k) && (st.k==='成交'?!x.includes('總價'):true));
                             hA = kMatchH ? (parseFloat(String(house[kMatchH]).replace(/,/g,''))||0) : 0; 
                             lA = kMatchL ? (parseFloat(String(land[kMatchL]).replace(/,/g,''))||0) : 0; 
                             exp=hA+lA; 
@@ -838,8 +839,8 @@
                                 <td className={`py-2.5 px-2 font-bold text-center ${st.k==='客變'?'text-purple-700':''}`}>{st.l}</td>
                                 <td className="text-right px-2 text-sky-700">
                                     {isEditingMode && st.k !== '客變' && st.k !== '成交' ? (
-                                        <input className="w-24 border rounded px-1 py-0.5 text-right text-sm" value={house[Object.keys(house).find(x=>x.includes(st.k))] || 0} onChange={e=>{
-                                            const kMatch = Object.keys(house).find(x=>x.includes(st.k)) || `應付${st.k}`;
+                                        <input className="w-24 border rounded px-1 py-0.5 text-right text-sm" value={house[Object.keys(house).find(x=>x.includes(st.k) && (st.k==='成交'?!x.includes('總價'):true))] || 0} onChange={e=>{
+                                            const kMatch = Object.keys(house).find(x=>x.includes(st.k) && (st.k==='成交'?!x.includes('總價'):true)) || `應付${st.k}`;
                                             const newHouse = {...selectedUnit.財務款項.house, [kMatch]: e.target.value};
                                             setSelectedUnit({...selectedUnit, 財務款項: {...selectedUnit.財務款項, house: newHouse}});
                                         }}/>
@@ -847,8 +848,8 @@
                                 </td>
                                 <td className="text-right px-2 text-amber-700">
                                     {isEditingMode && st.k !== '客變' && st.k !== '成交' ? (
-                                        <input className="w-24 border rounded px-1 py-0.5 text-right text-sm" value={land[Object.keys(land).find(x=>x.includes(st.k))] || 0} onChange={e=>{
-                                            const kMatch = Object.keys(land).find(x=>x.includes(st.k)) || `應付${st.k}`;
+                                        <input className="w-24 border rounded px-1 py-0.5 text-right text-sm" value={land[Object.keys(land).find(x=>x.includes(st.k) && (st.k==='成交'?!x.includes('總價'):true))] || 0} onChange={e=>{
+                                            const kMatch = Object.keys(land).find(x=>x.includes(st.k) && (st.k==='成交'?!x.includes('總價'):true)) || `應付${st.k}`;
                                             const newLand = {...selectedUnit.財務款項.land, [kMatch]: e.target.value};
                                             setSelectedUnit({...selectedUnit, 財務款項: {...selectedUnit.財務款項, land: newLand}});
                                         }}/>
