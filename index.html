@@ -810,7 +810,7 @@
 
                   <div className="bg-white p-5 rounded-2xl border shadow-sm">
                     <h3 className="text-sm font-bold text-[#8C9B90] mb-4 border-b pb-2 flex items-center gap-2"><DollarSign size={16}/>財務款項沖銷明細</h3>
-                    <div className="overflow-x-auto"><table className="w-full text-xs border-separate border-spacing-y-1.5"><thead><tr className="text-gray-400 font-bold"><th className="text-center py-2">階段</th><th className="text-right px-2">房屋款</th><th className="text-right px-2">土地款</th><th className="text-right px-2">應付合計</th><th className="text-right px-2 text-[#8C9B90]">已收實沖</th><th className="text-right px-2 text-red-500">尚欠餘額</th><th className="text-center">狀態</th></tr></thead><tbody>
+                    <div className="overflow-x-auto"><table className="w-full text-xs border-separate border-spacing-y-1.5"><thead><tr className="text-gray-400 font-bold"><th className="text-center py-2">階段</th><th className="text-center px-2">房屋款</th><th className="text-center px-2">土地款</th><th className="text-center px-2">應付合計</th><th className="text-center px-2 text-[#8C9B90]">已收實沖</th><th className="text-center px-2 text-red-500">尚欠餘額</th><th className="text-center">狀態</th></tr></thead><tbody>
                       {(() => {
                         const house = selectedUnit.財務款項.house || {};
                         const land = selectedUnit.財務款項.land || {};
@@ -867,27 +867,56 @@
 
                   <div className="bg-white p-5 rounded-2xl border shadow-sm">
                     <h3 className="text-sm font-bold text-[#8C9B90] mb-4 border-b pb-2 flex items-center gap-2"><FileText size={16}/>匯款紀錄管理</h3>
-                    <table className="w-full text-xs border-separate border-spacing-y-1.5"><thead><tr className="text-gray-400 font-bold"><th className="text-center py-2">匯款日期</th><th className="text-right px-2">實收金額</th><th className="text-center">發票日期</th><th className="text-center">發票號碼</th>{isAdmin && <th className="text-center">操作</th>}</tr></thead><tbody>
+                    <table className="w-full text-xs border-separate border-spacing-y-1.5">
+                      <thead>
+                        <tr>
+                          <th className="text-center py-2 bg-emerald-50 text-emerald-700 rounded-l-md font-bold">匯款日期</th>
+                          <th className="text-center px-2 bg-emerald-50 text-emerald-700 font-bold">實收金額</th>
+                          <th className="text-center py-2 bg-orange-50 text-orange-700 font-bold">發票日期</th>
+                          <th className="text-center px-2 bg-orange-50 text-orange-700 rounded-r-md font-bold">發票號碼</th>
+                          {isAdmin && <th className="text-center text-gray-400 font-bold">操作</th>}
+                        </tr>
+                      </thead>
+                      <tbody>
                       {(selectedUnit.匯款紀錄 || []).map((r,i) => {
                         const amt = parseFloat(String(r[Object.keys(r).find(k=>k.includes('金額'))||'金額']).replace(/,/g,''))||0;
                         const rK = r._id;
                         const cD = firebaseInvoices[rK] || {};
-                        return (<tr key={i} className={`hover:bg-gray-50/50 ${r._isCustom?'bg-blue-50/10':''} rounded-lg transition-all`}><td className="px-2 py-2.5 text-center">{renderDateIfApplicable('日期',r[Object.keys(r).find(k=>k.includes('日期'))||'日期'])} {r._isCustom && <span className="ml-1 text-[10px] bg-blue-100 text-blue-600 px-1.5 py-0.5 rounded font-bold">手</span>}</td><td className="text-right px-2 font-bold">{amt.toLocaleString()}</td><td className="px-2"><input type="text" disabled={!isAdmin} className="border-none bg-transparent w-full text-xs text-center focus:ring-0" value={cD['發票日期'] || renderDateIfApplicable('發票日期', r['發票日期']) || ''} onChange={e=>handleInvoiceChange(rK,'發票日期',e.target.value)} placeholder="日期"/></td><td className="px-2"><input type="text" disabled={!isAdmin} className="border-none bg-transparent w-full text-xs text-center focus:ring-0 font-mono" value={cD['發票號碼'] || r['發票號碼'] || ''} onChange={e=>handleInvoiceChange(rK,'發票號碼',e.target.value)} placeholder="號碼"/></td><td className="text-center">{isAdmin && <button onClick={async ()=>{
-                          if(!confirm("確定要刪除這筆匯款紀錄嗎？"))return;
-                          if(r._isImported) {
-                            await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'custom', 'additions'), { deletedImportedRemittances: arrayUnion(r._id) }, { merge: true });
-                          } else {
-                            const uR = (customData.remittances || []).filter(x=>x.id!==r.id);
-                            await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'custom', 'additions'), { remittances: uR }, { merge: true });
-                          }
-                          setSelectedUnit({...selectedUnit, 匯款紀錄: selectedUnit.匯款紀錄.filter(x=>x._id !== r._id)});
-                        }} className="text-red-400 hover:text-red-600 transition-all active:scale-95"><Trash2 size={14}/></button>}</td></tr>);
+                        return (
+                          <tr key={i} className="hover:opacity-80 transition-all">
+                            <td className={`px-2 py-2.5 text-center bg-emerald-50/70 rounded-l-md ${r._isCustom?'border-l-2 border-emerald-400':''}`}>
+                              {renderDateIfApplicable('日期',r[Object.keys(r).find(k=>k.includes('日期'))||'日期'])} 
+                              {r._isCustom && <span className="ml-1 text-[10px] bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded font-bold">手</span>}
+                            </td>
+                            <td className="text-right px-2 font-bold bg-emerald-50/70 text-emerald-900">
+                              {amt.toLocaleString()}
+                            </td>
+                            <td className="px-2 bg-orange-50/70">
+                              <input type="text" disabled={!isAdmin} className="border-none bg-transparent w-full text-xs text-center focus:ring-0 text-orange-900 placeholder-orange-300" value={cD['發票日期'] || renderDateIfApplicable('發票日期', r['發票日期']) || ''} onChange={e=>handleInvoiceChange(rK,'發票日期',e.target.value)} placeholder="日期"/>
+                            </td>
+                            <td className="px-2 bg-orange-50/70 rounded-r-md">
+                              <input type="text" disabled={!isAdmin} className="border-none bg-transparent w-full text-xs text-center focus:ring-0 font-mono text-orange-900 placeholder-orange-300" value={cD['發票號碼'] || r['發票號碼'] || ''} onChange={e=>handleInvoiceChange(rK,'發票號碼',e.target.value)} placeholder="號碼"/>
+                            </td>
+                            <td className="text-center">
+                              {isAdmin && <button onClick={async ()=>{
+                                if(!confirm("確定要刪除這筆匯款紀錄嗎？"))return;
+                                if(r._isImported) {
+                                  await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'custom', 'additions'), { deletedImportedRemittances: arrayUnion(r._id) }, { merge: true });
+                                } else {
+                                  const uR = (customData.remittances || []).filter(x=>x.id!==r.id);
+                                  await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'custom', 'additions'), { remittances: uR }, { merge: true });
+                                }
+                                setSelectedUnit({...selectedUnit, 匯款紀錄: selectedUnit.匯款紀錄.filter(x=>x._id !== r._id)});
+                              }} className="text-red-400 hover:text-red-600 transition-all active:scale-95"><Trash2 size={14}/></button>}
+                            </td>
+                          </tr>
+                        );
                       })}
                       {isAdmin && (
-                        <tr className="bg-blue-50/30 rounded-xl">
-                            <td className="p-2"><input type="date" className="border rounded text-xs w-full p-1.5 text-center" value={remitInput.date} onChange={e=>setRemitInput({...remitInput, date: e.target.value})}/></td>
-                            <td className="p-2"><input type="number" placeholder="金額" className="border rounded text-xs w-full p-1.5 text-right" value={remitInput.amt} onChange={e=>setRemitInput({...remitInput, amt: e.target.value})}/></td>
-                            <td colSpan="3" className="p-2 text-right"><button onClick={async () => {
+                        <tr className="bg-blue-50/40 rounded-xl">
+                            <td className="p-2 rounded-l-md"><input type="date" className="border border-white/60 rounded text-xs w-full p-1.5 text-center bg-white/60 focus:bg-white" value={remitInput.date} onChange={e=>setRemitInput({...remitInput, date: e.target.value})}/></td>
+                            <td className="p-2"><input type="number" placeholder="金額" className="border border-white/60 rounded text-xs w-full p-1.5 text-right bg-white/60 focus:bg-white" value={remitInput.amt} onChange={e=>setRemitInput({...remitInput, amt: e.target.value})}/></td>
+                            <td colSpan={isAdmin ? "3" : "2"} className="p-2 text-right rounded-r-md"><button onClick={async () => {
                                 if(remitInput.amt){
                                     const rec = { unitKey:`${selectedUnit.基本資料.樓層}_${selectedUnit.基本資料.編號}`, 匯款日期:remitInput.date.replace(/-/g,'/'), 匯款金額:Number(remitInput.amt), _isCustom:true, id:Date.now().toString() };
                                     const newR = [...(customData.remittances || []), rec];
