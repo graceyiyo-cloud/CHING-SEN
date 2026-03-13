@@ -493,8 +493,8 @@
                     if (st.k === '客變') {
                         exp = charges;
                     } else {
-                        const kMatchH = Object.keys(house).find(x=>x.includes(st.k) && (st.k==='成交'?!x.includes('總價'):true));
-                        const kMatchL = Object.keys(land).find(x=>x.includes(st.k) && (st.k==='成交'?!x.includes('總價'):true));
+                        const kMatchH = Object.keys(house).find(x=>x.includes(st.k));
+                        const kMatchL = Object.keys(land).find(x=>x.includes(st.k));
                         const hA = kMatchH ? (parseFloat(String(house[kMatchH]).replace(/,/g,''))||0) : 0;
                         const lA = kMatchL ? (parseFloat(String(land[kMatchL]).replace(/,/g,''))||0) : 0;
                         exp = hA + lA;
@@ -783,7 +783,7 @@
                                 return (
                                   <td key={i} rowSpan={isSticky?span:1} className={`px-2 py-2 border-r ${colClass} ${getAlignClass(col, row[col])} ${isSticky ? 'sticky z-20 bg-white align-middle' : ''} ${col==='買方'?'font-bold text-[#8C9B90]':''} ${unpaidStyles}`} style={isSticky?{left:leftPos}:{}}>
                                     {displayVal}
-                                    {col === '編號' && isTransfer && <span className="ml-1 px-1 bg-orange-100 text-orange-600 text-[9px] font-bold rounded">換</span>}
+                                    {col === '買方' && isTransfer && <span className="ml-1 px-1 bg-orange-100 text-orange-600 text-[9px] font-bold rounded">換</span>}
                                   </td>
                                 );
                             })}
