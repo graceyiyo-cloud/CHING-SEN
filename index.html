@@ -451,6 +451,77 @@
         e.target.value = '';
       };
 
+      const handleExportSystemExcel = () => {
+        const wb = window.XLSX.utils.book_new();
+
+        Object.keys(sheetsData).forEach(sheetName => {
+          let rows = [...(sheetsData[sheetName] || [])].map(r => ({...r}));
+          
+          if (sheetName.includes('收款總表') && customData?.units) {
+             Object.keys(customData.units).forEach(key => {
+                const cu = customData.units[key]; if (!cu?.基本資料) return;
+                const f = normStr(cu.基本資料.樓層), u = normStr(cu.基本資料.編號);
+                const exists = rows.find(r => normStr(r['樓層']) === f && normStr(r['編號']) === u);
+                if (!exists) {
+                    rows.push({ '樓層': cu.基本資料.樓層, '編號': cu.基本資料.編號, '買方': cu.基本資料.買方, '車位': cu.基本資料.車位, '預收款': cu.基本資料.預收款, '交屋日期': cu.基本資料.交屋日期 });
+                } else {
+                    if (cu.基本資料?.買方) exists['買方'] = cu.基本資料.買方;
+                    if (cu.基本資料?.車位) exists['車位'] = cu.基本資料.車位;
+                    if (cu.基本資料?.預收款) exists['預收款'] = cu.基本資料.預收款;
+                    if (cu.基本資料?.交屋日期) exists['交屋日期'] = cu.基本資料.交屋日期;
+                }
+             });
+          }
+          
+          if (sheetName.match(/匯款|發票/)) {
+             rows = rows.map((r, i) => {
+                const u = parseUnitInfo(r);
+                const aK = Object.keys(r).find(k => k.includes('金額')) || '金額';
+                const amt = parseFloat(String(r[aK]).replace(/,/g, '')) || 0;
+                const id = `${u.f}${u.u}_${amt}_${i}`;
+                const inv = firebaseInvoices[id];
+                if (inv) {
+                   return { ...r, '發票號碼': inv.發票號碼 || r['發票號碼'], '發票日期': inv.發票日期 || r['發票日期'] };
+                }
+                return r;
+             });
+          }
+
+          if (rows.length > 0) {
+            const ws = window.XLSX.utils.json_to_sheet(rows);
+            window.XLSX.utils.book_append_sheet(wb, ws, sheetName.substring(0, 31));
+          }
+        });
+
+        const customRemData = [...(customData.remittances || []), ...archivedRemittances].map((r, i) => {
+           const inv = firebaseInvoices[r.id] || {};
+           const [f, u] = (r.unitKey || '_').split('_');
+           return {
+              '樓層': f, '編號': u,
+              '匯款日期': r.匯款日期, '匯款金額': r.匯款金額,
+              '發票號碼': inv.發票號碼 || '', '發票日期': inv.發票日期 || ''
+           };
+        });
+        if (customRemData.length > 0) {
+           const ws = window.XLSX.utils.json_to_sheet(customRemData);
+           window.XLSX.utils.book_append_sheet(wb, ws, "自訂及封存匯款");
+        }
+
+        const customChangesData = (customData.customChanges || []).map(r => {
+           const [f, u] = (r.unitKey || '_').split('_');
+           return {
+              '樓層': f, '編號': u,
+              '客變日期': r.客變日期, '客變金額': r.客變金額, '客變說明': r.客變說明
+           };
+        });
+        if (customChangesData.length > 0) {
+           const ws = window.XLSX.utils.json_to_sheet(customChangesData);
+           window.XLSX.utils.book_append_sheet(wb, ws, "客變紀錄");
+        }
+
+        window.XLSX.writeFile(wb, `青森苑系統資料匯出_${new Date().toISOString().slice(0,10).replace(/-/g,'')}.xlsx`);
+      };
+
       const handleFileUpload = (e) => {
         if (!isAdmin) return;
         const file = e.target.files[0]; if (!file) return;
@@ -1033,6 +1104,7 @@
                           </div>
                       )}
                   </div>
+                  <button onClick={handleExportSystemExcel} className="bg-white border border-emerald-600 text-emerald-600 px-3 py-1.5 rounded-full text-[11px] font-bold hover:bg-emerald-600 hover:text-white flex items-center gap-1 shadow-sm transition-all"><Download size={12} />匯出系統資料</button>
                   <button onClick={() => setShowBackupModal(true)} className="bg-white border border-indigo-500 text-indigo-500 px-3 py-1.5 rounded-full text-[11px] font-bold hover:bg-indigo-500 hover:text-white flex items-center gap-1 shadow-sm transition-all"><Database size={12} />備份還原</button>
                   <button onClick={() => setShowAuthModal(true)} className="bg-white border border-[#8C9B90] text-[#8C9B90] px-3 py-1.5 rounded-full text-[11px] font-bold hover:bg-[#8C9B90] hover:text-white flex items-center gap-1 shadow-sm transition-all"><ShieldAlert size={12} />權限管理</button>
                   <button onClick={() => setShowAddUnitModal(true)} className="bg-white border border-[#8C9B90] text-[#8C9B90] px-3 py-1.5 rounded-full text-[11px] font-bold hover:bg-[#8C9B90] hover:text-white flex items-center gap-1 shadow-sm transition-all"><Plus size={12} />雲端新增</button>
