@@ -1442,7 +1442,7 @@
                     <h3 className="text-sm font-bold text-[#8C9B90] mb-4 border-b pb-2 flex items-center gap-2"><FileText size={16}/>匯款紀錄管理</h3>
                     <table className="w-full text-xs border-separate border-spacing-y-1.5">
                       <thead>
-                        <tr><th className="text-center py-2 bg-emerald-50 text-emerald-700 rounded-l-md font-bold">匯款日期</th><th className="text-center px-2 bg-emerald-50 text-emerald-700 font-bold">實收金額</th><th className="text-center py-2 bg-orange-50 text-orange-700 font-bold">發票日期</th><th className="text-center px-2 bg-orange-50 text-orange-700 rounded-r-md font-bold">發票號碼</th>{isAdmin && <th className="text-center text-gray-400 font-bold w-16">操作</th>}</tr>
+                        <tr><th className={`text-center py-2 bg-emerald-50 text-emerald-700 rounded-l-md font-bold ${!isAdmin && 'w-1/4'}`}>匯款日期</th><th className={`text-center px-2 bg-emerald-50 text-emerald-700 font-bold ${!isAdmin && 'w-1/4'}`}>實收金額</th><th className={`text-center py-2 bg-orange-50 text-orange-700 font-bold ${!isAdmin && 'w-1/4'}`}>發票日期</th><th className={`text-center px-2 bg-orange-50 text-orange-700 rounded-r-md font-bold ${!isAdmin && 'w-1/4'}`}>發票號碼</th>{isAdmin && <th className="text-center text-gray-400 font-bold w-16">操作</th>}</tr>
                       </thead>
                       <tbody>
                       {(() => {
