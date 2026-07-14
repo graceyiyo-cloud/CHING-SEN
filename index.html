@@ -1,0 +1,1596 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>青森苑 案場管理系統</title>
+
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.sheetjs.com/xlsx-0.20.0/package/dist/xlsx.full.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+  <script type="importmap">
+    {
+      "imports": {
+        "react": "https://esm.sh/react@18.2.0",
+        "react/jsx-runtime": "https://esm.sh/react@18.2.0/jsx-runtime",
+        "react-dom/client": "https://esm.sh/react-dom@18.2.0/client",
+        "lucide-react": "https://esm.sh/lucide-react@0.292.0",
+        "firebase/app": "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js",
+        "firebase/auth": "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js",
+        "firebase/firestore": "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js"
+      }
+    }
+  </script>
+  <style>
+    .scrollbar-hide::-webkit-scrollbar { display: none; }
+    .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
+    
+    .data-cell-wrap {
+      white-space: normal !important;
+      word-break: break-all !important;
+      max-width: 320px; 
+    }
+
+    /* 針對鎖定欄位設定固定寬度，確保 Left Offset 計算精準 */
+    .col-action { width: 44px !important; min-width: 44px; }
+    .col-floor { width: 45px !important; min-width: 45px; border-right: none !important; }
+    .col-unit { width: 45px !important; min-width: 45px; border-left: none !important; }
+    .col-buyer { width: 110px !important; min-width: 110px; max-width: 110px; }
+    .col-total { width: 100px !important; min-width: 100px; max-width: 100px; }
+
+    .sticky-shadow {
+      box-shadow: 1px 0 3px rgba(0,0,0,0.05);
+    }
+
+    .sticky-bottom-shadow {
+      box-shadow: 0 -2px 10px rgba(0,0,0,0.05);
+    }
+    
+    table { table-layout: auto; border-collapse: separate; border-spacing: 0; }
+    th, td { border: 1px solid #E5E7EB; }
+  </style>
+</head>
+<body class="bg-[#F5F5F0]">
+  <div id="root"></div>
+
+  <script type="text/babel" data-type="module">
+    import React, { useState, useEffect, useMemo, useRef } from 'react';
+    import { createRoot } from 'react-dom/client';
+    import { Upload, Search, X, Home, User, Phone, MapPin, FileText, DollarSign, Layers, Cloud, RefreshCw, Plus, LogIn, LogOut, AlertCircle, Trash2, Database, ShieldAlert, ChevronUp, ChevronDown, TrendingUp, CreditCard, Clock, Hammer, PieChart, Save, Lock, Download, CheckSquare, Info, Users, Copy, Check, ClipboardList } from 'lucide-react';
+    import { initializeApp } from 'firebase/app';
+    import { getAuth, onAuthStateChanged, signInWithCustomToken, GoogleAuthProvider, signInWithPopup, signOut } from 'firebase/auth';
+    import { getFirestore, doc, setDoc, getDoc, collection, onSnapshot, deleteDoc, getDocs, updateDoc, arrayUnion } from 'firebase/firestore';
+
+    const ADMIN_EMAIL = "jingchuantw@gmail.com"; 
+
+    const userFirebaseConfig = {
+      apiKey: "AIzaSyDREvduzrja4xjF-RCpKa-qv45JZCw9tjI",
+      authDomain: "gen-lang-client-0168131217.firebaseapp.com",
+      projectId: "gen-lang-client-0168131217",
+      storageBucket: "gen-lang-client-0168131217.firebasestorage.app",
+      messagingSenderId: "620488371764",
+      appId: "1:620488371764:web:d5eb9d1dff62d66bab2461"
+    };
+
+    const firebaseConfig = typeof window !== 'undefined' && window.__firebase_config ? JSON.parse(window.__firebase_config) : userFirebaseConfig;
+    const app = initializeApp(firebaseConfig);
+    const auth = getAuth(app);
+    const db = getFirestore(app);
+    const provider = new GoogleAuthProvider();
+    const appId = typeof window !== 'undefined' && window.__app_id ? window.__app_id : 'qingsenyuan-admin';
+    const initialAuthToken = typeof window !== 'undefined' && window.__initial_auth_token ? window.__initial_auth_token : null;
+
+    const MASTER_COLUMN_ORDER = [
+      '樓層', '編號', '買方', '成交總價', 
+      '房地比', '比例', '成交價', '訂金', '應付簽約金', '應付2F', '應付5F', '應付7F', '應付10F', '應付13F', '應付使照', '應付銀貸', '應付交屋',
+      '手機', '郵遞區號', '通訊地址', '備註', '通知寄紙本', '發票寄送',
+      '讓渡日期', '戶名', '姓名', '讓渡總價', '合約總價', '換約手續費0.1%', '發票號碼', '新戶'
+    ];
+
+    const normStr = (s) => String(s || '').trim().toUpperCase().replace(/\.0$/, '');
+
+    const getDoorplateAddress = (f, u) => {
+      if (!f || !u) return '';
+      const chNumbers = { '1':'一','2':'二','3':'三','4':'四','5':'五','6':'六','7':'七','8':'八','9':'九','10':'十','11':'十一','12':'十二','13':'十三','14':'十四','15':'十五' };
+      const fNum = String(f).replace(/\D/g, '');
+      const uNum = String(u).replace(/[^\d]/g, '');
+      if (!fNum || !uNum) return '';
+      const chFloor = chNumbers[fNum] || fNum;
+      return `臺南市中西區西湖里頂美三街37號${chFloor}樓之${uNum}`;
+    };
+
+    const convertToMinguo = (dateStr) => {
+      if (!dateStr) return '';
+      const gMatch = dateStr.match(/^(\d{4})[/-](\d{1,2})[/-](\d{1,2})$/);
+      if (gMatch) {
+        const year = parseInt(gMatch[1], 10);
+        if (year > 1911) return `${year - 1911}/${gMatch[2].padStart(2, '0')}/${gMatch[3].padStart(2, '0')}`;
+      }
+      return dateStr.replace(/-/g, '/');
+    };
+
+    const formatNum = (val) => {
+      if (val === undefined || val === null || val === '') return '';
+      const sVal = String(val).replace(/,/g, '');
+      const num = parseFloat(sVal);
+      if (isNaN(num) || !/^[0-9.-]+$/.test(sVal)) return val;
+      return num.toLocaleString();
+    };
+
+    const renderDateIfApplicable = (key, val) => {
+      if (val === undefined || val === null || val === '') return '';
+      const sVal = String(val).trim();
+      if ((String(key).includes('日期') || String(key).includes('日') || String(key).includes('時間戳記')) && sVal !== '') {
+        if (!isNaN(sVal)) {
+          const num = Number(sVal);
+          if (num > 20000 && num < 80000) {
+            const date = new Date(Math.round((num - 25569) * 86400 * 1000));
+            const mYear = date.getUTCFullYear() - 1911;
+            return `${mYear}/${String(date.getUTCMonth() + 1).padStart(2, '0')}/${String(date.getUTCDate()).padStart(2, '0')}`;
+          }
+        }
+        const gMatch = sVal.match(/^(\d{4})[/-](\d{1,2})[/-](\d{1,2})$/);
+        if (gMatch) {
+          const year = parseInt(gMatch[1], 10);
+          if (year > 1911) {
+            return `${year - 1911}/${gMatch[2].padStart(2, '0')}/${gMatch[3].padStart(2, '0')}`;
+          }
+        }
+      }
+      return sVal;
+    };
+
+    const getAlignClass = (key, val) => {
+      if (!val || val === '-') return 'text-center';
+      const sVal = String(val).replace(/,/g, '');
+      const isNum = !isNaN(parseFloat(sVal)) && /^[0-9.-]+$/.test(sVal);
+      if (key.includes('手機') || key.includes('日期') || key.includes('日') || key.includes('編號') || key.includes('樓層') || key.includes('號碼') || key.includes('郵遞區號')) return 'text-center';
+      return isNum ? 'text-right' : 'text-center';
+    };
+
+    const parseUnitInfo = (row) => {
+      if (!row) return { f: '', u: '', b: '' };
+      let f = row['樓層'], u = row['編號'], b = row['買方'] || row['姓名'] || '';
+      const combined = normStr(row['戶別'] || row['戶名'] || row['編號'] || '');
+      if (combined && (!f || !u)) {
+        const match = combined.match(/^(\d+)([A-Z]\d*)$/i);
+        if (match) { f = match[1]; u = match[2]; } else { u = combined; }
+      }
+      return { f: normStr(f), u: normStr(u), b: String(b || '').trim() };
+    };
+
+    const getStageKeyForColumn = (colName) => {
+      if (!colName) return null;
+      if (colName.includes('訂金')) return '訂金';
+      if (colName.includes('簽約')) return '簽約';
+      if (colName.includes('2F')) return '2F';
+      if (colName.includes('5F')) return '5F';
+      if (colName.includes('7F')) return '7F';
+      if (colName.includes('10F')) return '10F';
+      if (colName.includes('13F')) return '13F';
+      if (colName.includes('使照')) return '使照';
+      if (colName.includes('銀貸')) return '銀貸';
+      if (colName.includes('交屋')) return '交屋';
+      return null;
+    };
+
+    const PAYMENT_STAGES = [
+      { k: '客變', l: '客變費用' },
+      { k: '訂金', l: '訂金' }, { k: '簽約', l: '簽約金' }, { k: '2F', l: '2F工程' }, 
+      { k: '5F', l: '5F工程' }, { k: '7F', l: '7F工程' }, { k: '10F', l: '10F工程' }, 
+      { k: '13F', l: '13F工程' }, { k: '使照', l: '使照' }, { k: '銀貸', l: '銀貸' }, 
+      { k: '交屋', l: '交屋' }
+    ];
+
+    function App() {
+      const [sheetsData, setSheetsData] = useState({ "請匯入資料": [] });
+      const [activeTab, setActiveTab] = useState("請匯入資料");
+      const [searchTerm, setSearchTerm] = useState("");
+      const [selectedUnit, setSelectedUnit] = useState(null);
+      const [isEditingMode, setIsEditingMode] = useState(false);
+      const [showAddUnitModal, setShowAddUnitModal] = useState(false);
+      const [showAuthModal, setShowAuthModal] = useState(false);
+      const [showUnpaidDetails, setShowUnpaidDetails] = useState(false);
+      const [expandedStage, setExpandedStage] = useState(null);
+      const [copyStatus, setCopyStatus] = useState(null);
+      
+      const [user, setUser] = useState(null);
+      const [cloudStatus, setCloudStatus] = useState("idle"); 
+      const [isAuthLoading, setIsAuthLoading] = useState(true);
+      const [authError, setAuthError] = useState("");
+      
+      const [firebaseInvoices, setFirebaseInvoices] = useState({});
+      const [customData, setCustomData] = useState({ units: {}, remittances: [], customChanges: [], deletedImportedRemittances: [], allowedViewers: [] });
+      const [archivedRemittances, setArchivedRemittances] = useState([]);
+
+      const [remitInput, setRemitInput] = useState({ date: '', amt: '' });
+      const [cbInput, setCbInput] = useState({ date: '', note: '', amt: '' });
+      
+      const [showExportMenu, setShowExportMenu] = useState(false);
+      const [selectedExportStages, setSelectedExportStages] = useState([]);
+      const exportMenuRef = useRef(null);
+
+      const isAdmin = useMemo(() => user && user.email === ADMIN_EMAIL, [user]);
+
+      const getRecordDateWeight = (r) => {
+        const dateKey = Object.keys(r).find(k => k === '匯款日期' || k === '日期') || 
+                        Object.keys(r).find(k => k.includes('日期') && !k.includes('發票')) || 
+                        '日期';
+        let v = r[dateKey];
+        if (v === undefined || v === null || v === '') return 0;
+        
+        if (!isNaN(v) && Number(v) > 20000) {
+          const date = new Date(Math.round((Number(v) - 25569) * 86400 * 1000));
+          const mYear = date.getUTCFullYear() - 1911;
+          return mYear * 10000 + (date.getUTCMonth() + 1) * 100 + date.getUTCDate();
+        }
+
+        const p = String(v).replace(/-/g, '/').split('/');
+        if (p.length === 3) {
+          let y = parseInt(p[0]), m = parseInt(p[1]), d = parseInt(p[2]);
+          if (y > 1911) y -= 1911; 
+          return y * 10000 + m * 100 + d;
+        }
+        return 0;
+      };
+
+      // 預開發票已收款項金額計算 (依照原本的提撥預收款規則計算淨值後加總)
+      const preOpenReceivedMap = useMemo(() => {
+        if (!selectedUnit) return {};
+        const map = {};
+        
+        const prepayAmount = parseFloat(String(selectedUnit.基本資料?.預收款).replace(/,/g, '')) || 0;
+        const houseForExp = selectedUnit.財務款項?.house || {}; 
+        const landForExp = selectedUnit.財務款項?.land || {};
+        const chargesForExp = (selectedUnit.客變紀錄 || []).reduce((s,r) => s + (Number(r.客變金額)||0), 0);
+        
+        let expBeforeShiZhao = chargesForExp;
+        PAYMENT_STAGES.forEach(st => {
+            if (['客變', '使照', '銀貸', '交屋'].includes(st.k)) return;
+            const kMatchH = Object.keys(houseForExp).find(x=>x.includes(st.k) && !x.includes('總價'));
+            const kMatchL = Object.keys(landForExp).find(x=>x.includes(st.k) && !x.includes('總價'));
+            expBeforeShiZhao += (kMatchH ? (parseFloat(String(houseForExp[kMatchH]).replace(/,/g,''))||0) : 0);
+            expBeforeShiZhao += (kMatchL ? (parseFloat(String(landForExp[kMatchL]).replace(/,/g,''))||0) : 0);
+        });
+
+        const records = selectedUnit.匯款紀錄 || [];
+        const totalReceipts = records.reduce((s,r) => s + (parseFloat(String(r[Object.keys(r).find(k=>k.includes('金額'))||'金額']).replace(/,/g,''))||0), 0);
+        
+        const isPrioritizePrepay = selectedUnit.基本資料?.優先預收;
+        const canPrioritizePrepay = isPrioritizePrepay && (totalReceipts >= expBeforeShiZhao + prepayAmount);
+
+        let prepayAllocations = {}; 
+        let unallocated = prepayAmount;
+
+        if (canPrioritizePrepay) {
+          let runningForMatch = 0;
+          for (let i = 0; i < records.length; i++) {
+            const r = records[i];
+            const rawAmt = parseFloat(String(r[Object.keys(r).find(k=>k.includes('金額'))||'金額']).replace(/,/g,''))||0;
+            const previousRunning = runningForMatch;
+            runningForMatch += rawAmt;
+            if (unallocated > 0 && previousRunning >= expBeforeShiZhao && rawAmt === unallocated) {
+              prepayAllocations[r._id] = unallocated;
+              unallocated = 0;
+              break; 
+            }
+          }
+        
+          let running = 0;
+          for (let i = 0; i < records.length; i++) {
+            const r = records[i];
+            const rawAmt = parseFloat(String(r[Object.keys(r).find(k=>k.includes('金額'))||'金額']).replace(/,/g,''))||0;
+            running += rawAmt;
+            if (unallocated > 0 && running > expBeforeShiZhao && !prepayAllocations[r._id]) {
+              const available = Math.min(rawAmt, running - expBeforeShiZhao);
+              const allocate = Math.min(unallocated, available);
+              prepayAllocations[r._id] = allocate;
+              unallocated -= allocate;
+            }
+          }
+        } else {
+          let expBeforePrepayNormal = expBeforeShiZhao;
+          const kMatchH = Object.keys(houseForExp).find(x=>x.includes('使照') && !x.includes('總價'));
+          const kMatchL = Object.keys(landForExp).find(x=>x.includes('使照') && !x.includes('總價'));
+          expBeforePrepayNormal += (kMatchH ? (parseFloat(String(houseForExp[kMatchH]).replace(/,/g,''))||0) : 0);
+          expBeforePrepayNormal += (kMatchL ? (parseFloat(String(landForExp[kMatchL]).replace(/,/g,''))||0) : 0);
+
+          let running = 0;
+          for (let i = 0; i < records.length; i++) {
+              const r = records[i];
+              const rawAmt = parseFloat(String(r[Object.keys(r).find(k=>k.includes('金額'))||'金額']).replace(/,/g,''))||0;
+              running += rawAmt;
+              if (unallocated > 0 && running > expBeforePrepayNormal) {
+                  const available = Math.min(rawAmt, running - expBeforePrepayNormal);
+                  const allocate = Math.min(unallocated, available);
+                  prepayAllocations[r._id] = allocate;
+                  unallocated -= allocate;
+              }
+          }
+        }
+
+        records.forEach(r => {
+          const rawAmt = parseFloat(String(r[Object.keys(r).find(k=>k.includes('金額'))||'金額']).replace(/,/g,''))||0;
+          const splitPrepay = prepayAllocations[r._id] || 0;
+          const amt = rawAmt - splitPrepay; // 發票實算沖銷額
+          
+          const rK = r._id;
+          const cD = firebaseInvoices[rK] || {};
+          const invNum = String(cD['發票號碼'] || r['發票號碼'] || '').trim().toUpperCase();
+          if (invNum && amt > 0) {
+            map[invNum] = (map[invNum] || 0) + amt;
+          }
+        });
+
+        return map;
+      }, [selectedUnit, firebaseInvoices]);
+
+      useEffect(() => {
+        const initAuth = async () => { if (initialAuthToken) await signInWithCustomToken(auth, initialAuthToken); };
+        initAuth();
+        const unsubscribe = onAuthStateChanged(auth, (u) => {
+          if (u) { setUser(u); setAuthError(""); } else { setUser(null); }
+          setIsAuthLoading(false);
+        });
+        return () => unsubscribe();
+      }, []);
+
+      useEffect(() => {
+        if (!user) return;
+        setCloudStatus("loading");
+        const unsubInv = onSnapshot(doc(db, 'artifacts', appId, 'public', 'data', 'invoices', 'all_invoices'), (s) => { if (s.exists()) setFirebaseInvoices(s.data()); });
+        const unsubCustom = onSnapshot(doc(db, 'artifacts', appId, 'public', 'data', 'custom', 'additions'), (s) => { 
+            const data = s.exists() ? s.data() : {};
+            setCustomData(data); 
+        });
+        const unsubArchived = onSnapshot(doc(db, 'artifacts', appId, 'public', 'data', 'custom', 'archived'), (s) => {
+            if (s.exists()) { setArchivedRemittances(s.data().remittances || []); } else { setArchivedRemittances([]); }
+        });
+        const unsubMaster = onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'master_sheets'), (snapshot) => {
+          if (!snapshot.empty) {
+            const newSheets = {};
+            snapshot.forEach(docSnap => { 
+              if (docSnap.id.match(/坪數/) || (docSnap.id.match(/車位/) && !docSnap.id.match(/預收款/))) return;
+              newSheets[docSnap.id] = docSnap.data().rows || []; 
+            });
+            setSheetsData(newSheets);
+            setCloudStatus("synced");
+            const sortedKeys = Object.keys(newSheets)
+                .filter(t => !t.includes('匯款及發票明細') && !t.includes('預收款'))
+                .sort((a,b) => a.includes('收款總表') ? -1 : b.includes('收款總表') ? 1 : 0);
+            if ((activeTab === "請匯入資料" || activeTab === "請先登入系統") && sortedKeys.length > 0) setActiveTab(sortedKeys[0]);
+          } else { setCloudStatus("synced"); }
+        });
+        return () => { unsubInv(); unsubCustom(); unsubMaster(); unsubArchived(); };
+      }, [user]);
+
+      useEffect(() => {
+          if (user && cloudStatus === "synced" && user.email !== ADMIN_EMAIL) {
+              const allowed = customData?.allowedViewers || [];
+              const isAllowed = allowed.some(v => (typeof v === 'string' ? v : v.email) === user.email);
+              if (!isAllowed) {
+                  signOut(auth).then(() => { setAuthError(`帳號 ${user.email} 未獲授權。`); });
+              } else { setAuthError(""); }
+          }
+      }, [user, cloudStatus, customData?.allowedViewers]);
+
+      useEffect(() => {
+        function handleClickOutside(event) { if (exportMenuRef.current && !exportMenuRef.current.contains(event.target)) { setShowExportMenu(false); } }
+        document.addEventListener("mousedown", handleClickOutside);
+        return () => document.removeEventListener("mousedown", handleClickOutside);
+      }, []);
+
+      const handleGoogleLogin = async () => { try { await signInWithPopup(auth, provider); } catch (e) { console.error(e); } };
+
+      const handleFileUpload = (e) => {
+        if (!isAdmin) return;
+        const file = e.target.files[0]; if (!file) return;
+        const reader = new FileReader();
+        reader.onload = async (evt) => {
+          const wb = window.XLSX.read(evt.target.result, { type: 'binary' });
+          const newData = {};
+          wb.SheetNames.forEach(name => {
+            if (name.match(/坪數/) || (name.match(/車位/) && !name.match(/預收款/))) return;
+            const ws = wb.Sheets[name];
+            const rawData = window.XLSX.utils.sheet_to_json(ws, { header: 1, defval: "" });
+            if (rawData.length === 0) return;
+            let hIdx = 0;
+            for (let i = 0; i < Math.min(10, rawData.length); i++) {
+              const rowStr = rawData[i].join('').toLowerCase();
+              if (rowStr.includes('樓層') || rowStr.includes('編號') || rowStr.includes('戶別')) { hIdx = i; break; }
+            }
+            const headerRow = rawData[hIdx] || [];
+            const cleanHeaders = headerRow.map((h, c) => h ? String(h).replace(/[\r\n\s]+/g, '').trim() : `__EMPTY_${c}`);
+            const sheetJson = [];
+            for (let r = hIdx + 1; r < rawData.length; r++) {
+              const rowObj = {};
+              cleanHeaders.forEach((h, c) => { rowObj[h] = rawData[r][c] || ""; });
+              if (Object.values(rowObj).some(v => String(v).includes('合計') || String(v).includes('總計'))) continue;
+              if (Object.values(rowObj).some(v => String(v).trim() !== "")) sheetJson.push(rowObj);
+            }
+            if (sheetJson.length > 0) newData[name] = sheetJson;
+          });
+          if (user && Object.keys(newData).length > 0) {
+            const colRef = collection(db, 'artifacts', appId, 'public', 'data', 'master_sheets');
+            const oldDocs = await getDocs(colRef);
+            for (const d of oldDocs.docs) await deleteDoc(d.ref);
+            for (const sheetName of Object.keys(newData)) await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'master_sheets', sheetName.replace(/\//g, '_')), { rows: newData[sheetName] });
+          }
+        };
+        reader.readAsBinaryString(file);
+      };
+      const projectStats = useMemo(() => {
+        let totalSales = 0, totalReceived = 0, soldCount = 0, totalUnitsCount = 0;
+        const seenUnits = new Set();
+        const salesTabKey = Object.keys(sheetsData).find(k => k.includes('收款總表'));
+        if (salesTabKey) {
+          const rows = sheetsData[salesTabKey] || [];
+          rows.forEach(row => {
+            const f = normStr(row['樓層']), u = normStr(row['編號']);
+            if (f && u && !f.includes('合計')) { 
+              const key = `${f}_${u}`;
+              if (!seenUnits.has(key)) {
+                seenUnits.add(key); totalUnitsCount++;
+                const price = parseFloat(String(row['成交總價'] || '').replace(/,/g, ''));
+                if (!isNaN(price) && price > 0) { totalSales += price; soldCount++; }
+              }
+            }
+          });
+        }
+        (customData.customChanges || []).forEach(r => { totalSales += Number(r.客變金額) || 0; });
+        Object.keys(sheetsData).forEach(name => {
+          if (name.includes('匯款') || name.includes('發票')) {
+            (sheetsData[name] || []).forEach((row, i) => {
+              const u = parseUnitInfo(row);
+              const aK = Object.keys(row).find(k => k.includes('金額')) || '金額';
+              const amt = parseFloat(String(row[aK]).replace(/,/g, '')) || 0;
+              const id = `${u.f}${u.u}_${amt}_${i}`;
+              if (!(customData.deletedImportedRemittances || []).includes(id)) totalReceived += amt;
+            });
+          }
+        });
+        (customData.remittances || []).forEach(r => { totalReceived += parseFloat(String(r.匯款金額)) || 0; });
+        archivedRemittances.forEach(r => { totalReceived += parseFloat(String(r.匯款金額)) || 0; });
+        return { total: totalSales, received: totalReceived, outstanding: totalSales - totalReceived, unitTotal: totalUnitsCount, unitSold: soldCount, unitUnsold: totalUnitsCount - soldCount };
+      }, [sheetsData, customData, archivedRemittances]);
+
+      const transferUnitKeys = useMemo(() => {
+        const keys = new Set();
+        Object.keys(sheetsData).forEach(sN => {
+          if (sN.match(/換約|讓渡/)) {
+            const rows = sheetsData[sN] || [];
+            rows.forEach(row => { const info = parseUnitInfo(row); if (info.f && info.u) keys.add(`${info.f}_${info.u}`); });
+          }
+        });
+        return keys;
+      }, [sheetsData]);
+
+      const uninvoicedPayments = useMemo(() => {
+        if (!isAdmin) return [];
+        const list = [];
+        Object.keys(sheetsData).forEach(name => {
+          if (name.includes('匯款') || name.includes('發票')) {
+            (sheetsData[name] || []).forEach((row, i) => {
+              const u = parseUnitInfo(row);
+              const aK = Object.keys(row).find(k => k.includes('金額')) || '金額';
+              const dK = Object.keys(row).find(k => k.includes('日期')) || '日期';
+              const amt = parseFloat(String(row[aK]).replace(/,/g, '')) || 0;
+              const id = `${u.f}${u.u}_${amt}_${i}`;
+              if ((customData.deletedImportedRemittances || []).includes(id)) return;
+              const inv = firebaseInvoices[id] || {};
+              const invNum = inv.發票號碼 || row['發票號碼'] || '';
+              if (!invNum && amt > 0) { list.push({ f: u.f, u: u.u, buyer: u.b, date: row[dK], amt, id, type: 'imported' }); }
+            });
+          }
+        });
+        [...(customData.remittances || []), ...archivedRemittances].forEach(r => {
+          const inv = firebaseInvoices[r.id] || {};
+          if (!inv.發票號碼 && r.匯款金額 > 0) {
+            const [f, uPart] = r.unitKey.split('_');
+            list.push({ f, u: uPart, buyer: '', date: r.匯款日期, amt: r.匯款金額, id: r.id, type: 'custom' });
+          }
+        });
+        return list.sort((a,b) => String(b.date).localeCompare(String(a.date)));
+      }, [sheetsData, customData, archivedRemittances, firebaseInvoices, isAdmin]);
+
+      const getUnitFullDetails = (tF, tU, dB) => {
+        const uK = `${tF}_${tU}`;
+        const info = { 基本資料: { 樓層: tF, 編號: tU, 買方: dB, 車位: '', 預收款: '' }, 財務款項: { house: {}, land: {} }, 客戶資料: {}, 匯款紀錄: [], 客變紀錄: [], 換約前手: null };
+        Object.keys(sheetsData).forEach(sN => {
+          const sheet = sheetsData[sN] || [];
+          if (sN.match(/換約|讓渡/)) {
+            const swap = sheet.find(r => { const u = parseUnitInfo(r); return u.f === tF && u.u === tU; });
+            if (swap) info.換約前手 = { 日期: swap['讓渡日期'], 姓名: swap['姓名'] };
+          }
+          if (sN.match(/匯款|發票/)) {
+            sheet.forEach((r, i) => {
+              const u = parseUnitInfo(r);
+              const aK = Object.keys(r).find(k => k.includes('金額')) || '金額';
+              const amt = parseFloat(String(r[aK]).replace(/,/g, '')) || 0;
+              const id = `${u.f}${u.u}_${amt}_${i}`;
+              if (u.f === tF && u.u === tU && !(customData.deletedImportedRemittances || []).includes(id)) {
+                info.匯款紀錄.push({ ...r, _id: id, _isImported: true });
+              }
+            });
+          }
+          if (sN.match(/預收款/)) {
+            const match = sheet.find(r => normStr(r['樓層']) === tF && normStr(r['編號']) === tU);
+            if (match) { info.基本資料.車位 = match['汽車車位'] || ''; info.基本資料.預收款 = match['預收代書款'] || ''; }
+          }
+          const matches = sheet.filter(r => normStr(r['樓層']) === tF && normStr(r['編號']) === tU);
+          if (matches.length > 0) {
+            if (sN.match(/款項|財務|收款總表/) && !sN.match(/預收款/)) { 
+              info.財務款項.house = matches.find(m => Object.values(m).some(v => String(v).includes('房屋'))) || matches[0]; 
+              info.財務款項.land = matches.find(m => Object.values(m).some(v => String(v).includes('土地'))) || {}; 
+            }
+            else if (sN.match(/客戶|聯絡/)) info.客戶資料 = matches[0];
+          }
+        });
+        if (customData?.units?.[uK]) { 
+          const cu = customData.units[uK]; 
+          if(cu.客戶資料) info.客戶資料 = { ...info.客戶資料, ...cu.客戶資料 }; 
+          if(cu.house) info.財務款項.house = { ...info.財務款項.house, ...cu.house }; 
+          if(cu.land) info.財務款項.land = { ...info.財務款項.land, ...cu.land }; 
+          if(cu.基本資料?.買方 !== undefined) info.基本資料.買方 = cu.基本資料.買方;
+          if(cu.基本資料?.車位 !== undefined) info.基本資料.車位 = cu.基本資料.車位;
+          if(cu.基本資料?.預收款 !== undefined) info.基本資料.預收款 = cu.基本資料.預收款;
+          if(cu.基本資料?.優先預收 !== undefined) info.基本資料.優先預收 = cu.基本資料.優先預收;
+          if(cu.基本資料?.尾款發票號碼 !== undefined) info.基本資料.尾款發票號碼 = cu.基本資料.尾款發票號碼;
+          if(cu.基本資料?.尾款發票日期 !== undefined) info.基本資料.尾款發票日期 = cu.基本資料.尾款發票日期;
+          
+          if(cu.基本資料?.預開發票清單 !== undefined) {
+              info.基本資料.預開發票清單 = cu.基本資料.預開發票清單;
+          } else if (cu.基本資料?.尾款發票號碼 || cu.基本資料?.尾款發票日期) {
+              info.基本資料.預開發票清單 = [{
+                  日期: cu.基本資料.尾款發票日期 || '',
+                  號碼: cu.基本資料.尾款發票號碼 || '',
+                  金額: '',
+                  土地款: false,
+                  id: 'legacy-1'
+              }];
+          } else {
+              info.基本資料.預開發票清單 = [];
+          }
+        }
+        const allRems = [...(customData.remittances || []), ...archivedRemittances];
+        const rems = allRems.filter(r => r.unitKey === uK).map(r => ({ ...r, _id: r.id, _isCustom: true }));
+        info.匯款紀錄 = [...info.匯款紀錄, ...rems];
+
+        info.匯款紀錄.sort((a, b) => getRecordDateWeight(a) - getRecordDateWeight(b));
+        
+        info.客變紀錄 = (customData.customChanges || []).filter(r => r.unitKey === uK);
+        return info;
+      };
+
+      const allUnitsPaymentStatus = useMemo(() => {
+        const statusMap = {};
+        const salesTabKey = Object.keys(sheetsData).find(k => k.includes('收款總表'));
+        if (!salesTabKey) return statusMap;
+        const rows = sheetsData[salesTabKey] || [];
+        const seen = new Set();
+        rows.forEach(row => {
+            const uInfo = parseUnitInfo(row); const key = `${uInfo.f}_${uInfo.u}`;
+            if (key !== "_" && !seen.has(key) && !uInfo.f.includes('合計')) {
+                seen.add(key);
+                const details = getUnitFullDetails(uInfo.f, uInfo.u, uInfo.b);
+                const house = details.財務款項.house || {}; const land = details.財務款項.land || {};
+                const receipts = details.匯款紀錄.reduce((s,r) => s + (parseFloat(String(r[Object.keys(r).find(k=>k.includes('金額'))||'金額']).replace(/,/g,''))||0), 0);
+                const charges = (details.客變紀錄 || []).reduce((s,r) => s + (Number(r.客變金額)||0), 0);
+                
+                let expBeforeShiZhao = charges;
+                PAYMENT_STAGES.forEach(st => {
+                    if (['客變', '使照', '銀貸', '交屋'].includes(st.k)) return;
+                    const kMatchH = Object.keys(house).find(x=>x.includes(st.k) && !x.includes('總價'));
+                    const kMatchL = Object.keys(land).find(x=>x.includes(st.k) && !x.includes('總價'));
+                    expBeforeShiZhao += (kMatchH ? (parseFloat(String(house[kMatchH]).replace(/,/g,''))||0) : 0);
+                    expBeforeShiZhao += (kMatchL ? (parseFloat(String(land[kMatchL]).replace(/,/g,''))||0) : 0);
+                });
+                
+                let rem = receipts; const stageStatus = {};
+                const isPrioritizePrepay = details.基本資料?.優先預收;
+                const prepayAmt = parseFloat(String(details.基本資料.預收款).replace(/,/g, '')) || 0; 
+                
+                const canPrioritizePrepay = isPrioritizePrepay && (receipts >= expBeforeShiZhao + prepayAmt);
+
+                if (canPrioritizePrepay) {
+                    rem = Math.max(0, rem - prepayAmt);
+                }
+
+                PAYMENT_STAGES.forEach(st => {
+                    let exp = 0; if (st.k === '客變') { exp = charges; } else {
+                        const kMatchH = Object.keys(house).find(x=>x.includes(st.k) && !x.includes('總價'));
+                        const kMatchL = Object.keys(land).find(x=>x.includes(st.k) && !x.includes('總價'));
+                        const hA = kMatchH ? (parseFloat(String(house[kMatchH]).replace(/,/g,''))||0) : 0;
+                        const lA = kMatchL ? (parseFloat(String(land[kMatchL]).replace(/,/g,''))||0) : 0;
+                        exp = hA + lA;
+                    }
+                    
+                    let paid = 0; if (rem >= exp) { paid = exp; rem -= exp; } else { paid = rem; rem = 0; }
+                    if (st.k === '使照' && !canPrioritizePrepay) { 
+                        rem = Math.max(0, rem - prepayAmt); 
+                    }
+                    
+                    stageStatus[st.k] = { exp, paid, unpaid: exp > 0 ? exp - paid : 0, buyer: uInfo.b };
+                });
+                statusMap[key] = stageStatus;
+            }
+        });
+        return statusMap;
+      }, [sheetsData, customData, archivedRemittances]);
+
+      const stageUnpaidCounts = useMemo(() => {
+        const counts = {}; PAYMENT_STAGES.forEach(st => counts[st.k] = 0);
+        Object.values(allUnitsPaymentStatus).forEach(unitStatus => {
+          PAYMENT_STAGES.forEach(st => { if (unitStatus[st.k]?.unpaid > 0) counts[st.k]++; });
+        });
+        return counts;
+      }, [allUnitsPaymentStatus]);
+
+      // 已開發票未收款清單 (全域計算)
+      const unpaidInvoicesList = useMemo(() => {
+        if (!isAdmin) return [];
+        const list = [];
+        
+        Object.keys(allUnitsPaymentStatus).forEach(unitKey => {
+            const [f, u] = unitKey.split('_');
+            let buyer = '';
+            PAYMENT_STAGES.forEach(st => {
+               if (allUnitsPaymentStatus[unitKey][st.k]?.buyer) buyer = allUnitsPaymentStatus[unitKey][st.k].buyer;
+            });
+            
+            const details = getUnitFullDetails(f, u, buyer);
+            const preOpenList = details.基本資料?.預開發票清單 || [];
+            
+            if (preOpenList.length > 0) {
+                const map = {};
+                const prepayAmount = parseFloat(String(details.基本資料.預收款).replace(/,/g, '')) || 0;
+                const houseForExp = details.財務款項.house || {}; 
+                const landForExp = details.財務款項.land || {};
+                const chargesForExp = (details.客變紀錄 || []).reduce((s,r) => s + (Number(r.客變金額)||0), 0);
+                
+                let expBeforeShiZhao = chargesForExp;
+                PAYMENT_STAGES.forEach(st => {
+                    if (['客變', '使照', '銀貸', '交屋'].includes(st.k)) return;
+                    const kMatchH = Object.keys(houseForExp).find(x=>x.includes(st.k) && !x.includes('總價'));
+                    const kMatchL = Object.keys(landForExp).find(x=>x.includes(st.k) && !x.includes('總價'));
+                    expBeforeShiZhao += (kMatchH ? (parseFloat(String(houseForExp[kMatchH]).replace(/,/g,''))||0) : 0);
+                    expBeforeShiZhao += (kMatchL ? (parseFloat(String(landForExp[kMatchL]).replace(/,/g,''))||0) : 0);
+                });
+
+                const records = details.匯款紀錄 || [];
+                const totalReceipts = records.reduce((s,r) => s + (parseFloat(String(r[Object.keys(r).find(k=>k.includes('金額'))||'金額']).replace(/,/g,''))||0), 0);
+                const isPrioritizePrepay = details.基本資料?.優先預收;
+                const canPrioritizePrepay = isPrioritizePrepay && (totalReceipts >= expBeforeShiZhao + prepayAmount);
+
+                let prepayAllocations = {}; 
+                let unallocated = prepayAmount;
+
+                if (canPrioritizePrepay) {
+                    let runningForMatch = 0;
+                    for (let i = 0; i < records.length; i++) {
+                        const r = records[i];
+                        const rawAmt = parseFloat(String(r[Object.keys(r).find(k=>k.includes('金額'))||'金額']).replace(/,/g,''))||0;
+                        const previousRunning = runningForMatch;
+                        runningForMatch += rawAmt;
+                        if (unallocated > 0 && previousRunning >= expBeforeShiZhao && rawAmt === unallocated) {
+                            prepayAllocations[r._id] = unallocated; unallocated = 0; break; 
+                        }
+                    }
+                    let running = 0;
+                    for (let i = 0; i < records.length; i++) {
+                        const r = records[i];
+                        const rawAmt = parseFloat(String(r[Object.keys(r).find(k=>k.includes('金額'))||'金額']).replace(/,/g,''))||0;
+                        running += rawAmt;
+                        if (unallocated > 0 && running > expBeforeShiZhao && !prepayAllocations[r._id]) {
+                            const available = Math.min(rawAmt, running - expBeforeShiZhao);
+                            const allocate = Math.min(unallocated, available);
+                            prepayAllocations[r._id] = allocate; unallocated -= allocate;
+                        }
+                    }
+                } else {
+                    let expBeforePrepayNormal = expBeforeShiZhao;
+                    const kMatchH = Object.keys(houseForExp).find(x=>x.includes('使照') && !x.includes('總價'));
+                    const kMatchL = Object.keys(landForExp).find(x=>x.includes('使照') && !x.includes('總價'));
+                    expBeforePrepayNormal += (kMatchH ? (parseFloat(String(houseForExp[kMatchH]).replace(/,/g,''))||0) : 0);
+                    expBeforePrepayNormal += (kMatchL ? (parseFloat(String(landForExp[kMatchL]).replace(/,/g,''))||0) : 0);
+
+                    let running = 0;
+                    for (let i = 0; i < records.length; i++) {
+                        const r = records[i];
+                        const rawAmt = parseFloat(String(r[Object.keys(r).find(k=>k.includes('金額'))||'金額']).replace(/,/g,''))||0;
+                        running += rawAmt;
+                        if (unallocated > 0 && running > expBeforePrepayNormal) {
+                            const available = Math.min(rawAmt, running - expBeforePrepayNormal);
+                            const allocate = Math.min(unallocated, available);
+                            prepayAllocations[r._id] = allocate; unallocated -= allocate;
+                        }
+                    }
+                }
+
+                records.forEach(r => {
+                    const rawAmt = parseFloat(String(r[Object.keys(r).find(k=>k.includes('金額'))||'金額']).replace(/,/g,''))||0;
+                    const splitPrepay = prepayAllocations[r._id] || 0;
+                    const amt = rawAmt - splitPrepay; 
+                    const rK = r._id;
+                    const cD = firebaseInvoices[rK] || {};
+                    const invNum = String(cD['發票號碼'] || r['發票號碼'] || '').trim().toUpperCase();
+                    if (invNum && amt > 0) {
+                        map[invNum] = (map[invNum] || 0) + amt;
+                    }
+                });
+
+                preOpenList.forEach(inv => {
+                    const invNumStr = String(inv.號碼 || '').trim().toUpperCase();
+                    if (invNumStr) {
+                        const targetAmt = parseFloat(String(inv.金額 || '').replace(/,/g, '')) || 0;
+                        const matchedReceived = map[invNumStr] || 0;
+                        if (targetAmt > 0 && matchedReceived < targetAmt) {
+                            list.push({
+                                f: f, u: u, buyer: buyer,
+                                date: inv.日期, num: inv.號碼, 
+                                targetAmt, received: matchedReceived, unpaid: targetAmt - matchedReceived,
+                                isLand: !!inv.土地款
+                            });
+                        }
+                    }
+                });
+            }
+        });
+        return list.sort((a,b) => String(b.date).localeCompare(String(a.date)));
+      }, [allUnitsPaymentStatus, sheetsData, customData, archivedRemittances, firebaseInvoices, isAdmin]);
+
+      const combinedData = useMemo(() => {
+        let base = sheetsData[activeTab] ? [...sheetsData[activeTab]] : []; 
+        if (customData?.units && activeTab.includes('收款總表')) {
+          Object.keys(customData.units).forEach(key => {
+            const cu = customData.units[key]; if (!cu?.基本資料) return;
+            const f = normStr(cu.基本資料.樓層), u = normStr(cu.基本資料.編號);
+            const exists = base.find(r => normStr(r['樓層']) === f && normStr(r['編號']) === u);
+            if (!exists) base.push({ '樓層': cu.基本資料.樓層, '編號': cu.基本資料.編號, '買方': cu.基本資料.買方, '_isCustom': true });
+            else if (cu.基本資料?.買方) exists['買方'] = cu.基本資料.買方;
+          });
+        }
+        return base.filter(row => {
+          if (!searchTerm) return true;
+          const term = searchTerm.toLowerCase();
+          const uInfo = parseUnitInfo(row);
+          const combinedUnit = `${uInfo.f}${uInfo.u}`.toLowerCase();
+          const unitKey = `${uInfo.f}_${uInfo.u}`;
+          if (term === '換約') return transferUnitKeys.has(unitKey);
+          if (term === '客變') return (customData?.customChanges || []).some(c => c.unitKey === unitKey);
+          if (combinedUnit.includes(term)) return true;
+          return Object.values(row).some(v => String(v).toLowerCase().includes(term));
+        });
+      }, [sheetsData, activeTab, searchTerm, customData, transferUnitKeys]);
+
+      const currentColumns = useMemo(() => {
+        if (combinedData.length === 0) return [];
+        const cols = new Set();
+        combinedData.forEach(row => { Object.keys(row).forEach(k => { if(k !== '_isCustom' && !k.startsWith('__EMPTY')) cols.add(k); }); });
+        return Array.from(cols).sort((a, b) => {
+          const idxA = MASTER_COLUMN_ORDER.indexOf(a), idxB = MASTER_COLUMN_ORDER.indexOf(b);
+          if (idxA !== -1 && idxB !== -1) return idxA - idxB;
+          if (idxA !== -1) return -1;
+          if (idxB !== -1) return 1;
+          return 0;
+        });
+      }, [combinedData]);
+
+      const rowSpans = useMemo(() => {
+          const spans = {}; if (!activeTab.includes('收款總表')) return spans;
+          combinedData.forEach(row => { const key = `${normStr(row['樓層'])}_${normStr(row['編號'])}`; spans[key] = (spans[key] || 0) + 1; });
+          return spans;
+      }, [combinedData, activeTab]);
+
+      const totalsData = useMemo(() => {
+        const t = {};
+        currentColumns.forEach(c => {
+          if (['樓層', '編號', '買方', '手機', '地址', '備註', '郵遞區號'].some(ex => c.includes(ex))) return;
+          let sum = 0, seenKeys = new Set();
+          combinedData.forEach(row => {
+            const val = parseFloat(String(row[c] || '').replace(/,/g, ''));
+            if (!isNaN(val)) {
+                if (c === '成交總價') {
+                    const uk = `${normStr(row['樓層'])}_${normStr(row['編號'])}`;
+                    if (uk !== "_" && !seenKeys.has(uk)) { sum += val; seenKeys.add(uk); }
+                } else { sum += val; }
+            }
+          });
+          if (sum !== 0) t[c] = sum;
+        });
+        return t;
+      }, [combinedData, currentColumns]);
+
+      const openUnitDetails = (tF, tU, dB) => { setSelectedUnit(getUnitFullDetails(tF, tU, dB)); };
+
+      const handleInvoiceChange = async (rK, field, val) => {
+        if (!isAdmin) return;
+        let finalVal = val; if (field === '發票日期') finalVal = convertToMinguo(val);
+        const updated = { ...firebaseInvoices, [rK]: { ...(firebaseInvoices[rK] || {}), [field]: finalVal } };
+        setFirebaseInvoices(updated);
+        await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'invoices', 'all_invoices'), updated);
+      };
+
+      const handleInvoiceApplyPreOpen = async (rK, dateVal, numVal) => {
+        if (!isAdmin) return;
+        const dVal = convertToMinguo(dateVal || '');
+        const updated = { 
+            ...firebaseInvoices, 
+            [rK]: { ...(firebaseInvoices[rK] || {}), '發票日期': dVal, '發票號碼': numVal || '' } 
+        };
+        setFirebaseInvoices(updated);
+        await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'invoices', 'all_invoices'), updated);
+      };
+
+      const saveClientEdits = async () => {
+        if (!isAdmin || !selectedUnit) return;
+        const uK = `${selectedUnit.基本資料.樓層}_${selectedUnit.基本資料.編號}`;
+        const updatedUnits = { ...customData.units, [uK]: { ...customData.units[uK], 基本資料: selectedUnit.基本資料, 客戶資料: selectedUnit.客戶資料, house: selectedUnit.財務款項.house, land: selectedUnit.財務款項.land } };
+        await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'custom', 'additions'), { units: updatedUnits }, { merge: true });
+        setIsEditingMode(false);
+      };
+
+      const exportSelectedStagesToExcel = () => {
+        if (selectedExportStages.length === 0) { alert("請至少勾選一個項目！"); return; }
+        const salesTabKey = Object.keys(sheetsData).find(k => k.includes('收款總表'));
+        if (!salesTabKey) return;
+        const allUnits = []; const seen = new Set();
+        combinedData.forEach(row => {
+            const uInfo = parseUnitInfo(row); const key = `${uInfo.f}_${uInfo.u}`;
+            if (key !== "_" && !seen.has(key) && !uInfo.f.includes('合計')) { seen.add(key); allUnits.push(uInfo); }
+        });
+        const exportData = [];
+        allUnits.forEach(u => {
+            const details = getUnitFullDetails(u.f, u.u, u.b);
+            const house = details.財務款項.house || {}; const land = details.財務款項.land || {};
+            const receipts = details.匯款紀錄.reduce((s,r) => s + (parseFloat(String(r[Object.keys(r).find(k=>k.includes('金額'))||'金額']).replace(/,/g,''))||0), 0);
+            const charges = (details.客變紀錄 || []).reduce((s,r) => s + (Number(r.客變金額)||0), 0);
+            
+            let expBeforeShiZhao = charges;
+            PAYMENT_STAGES.forEach(st => {
+                if (['客變', '使照', '銀貸', '交屋'].includes(st.k)) return;
+                const kMatchH = Object.keys(house).find(x=>x.includes(st.k) && !x.includes('總價'));
+                const kMatchL = Object.keys(land).find(x=>x.includes(st.k) && !x.includes('總價'));
+                expBeforeShiZhao += (kMatchH ? (parseFloat(String(house[kMatchH]).replace(/,/g,''))||0) : 0);
+                expBeforeShiZhao += (kMatchL ? (parseFloat(String(land[kMatchL]).replace(/,/g,''))||0) : 0);
+            });
+
+            let rem = receipts; const stageStatus = {};
+            const isPrioritizePrepay = details.基本資料?.優先預收;
+            const prepayAmt = parseFloat(String(details.基本資料.預收款).replace(/,/g, '')) || 0; 
+            
+            const canPrioritizePrepay = isPrioritizePrepay && (receipts >= expBeforeShiZhao + prepayAmt);
+
+            if (canPrioritizePrepay) {
+                rem = Math.max(0, rem - prepayAmt);
+            }
+
+            PAYMENT_STAGES.forEach(st => {
+                let exp = 0; if (st.k === '客變') exp = charges; else {
+                    const kMatchH = Object.keys(house).find(x=>x.includes(st.k) && (st.k==='成交'?!x.includes('總價'):true));
+                    const kMatchL = Object.keys(land).find(x=>x.includes(st.k) && (st.k==='成交'?!x.includes('總價'):true));
+                    const hA = kMatchH ? (parseFloat(String(house[kMatchH]).replace(/,/g,''))||0) : 0; 
+                    const lA = kMatchL ? (parseFloat(String(land[kMatchL]).replace(/,/g,''))||0) : 0; 
+                    exp = hA + lA;
+                }
+                
+                let paid = 0; if (rem >= exp) { paid = exp; rem -= exp; } else { paid = rem; rem = 0; }
+                if (st.k === '使照' && !canPrioritizePrepay) { 
+                    rem = Math.max(0, rem - prepayAmt); 
+                }
+                
+                stageStatus[st.k] = { exp, paid, unpaid: exp > 0 ? exp - paid : 0 };
+            });
+            const rowData = { '樓層': u.f, '編號': u.u, '買方': u.b };
+            selectedExportStages.forEach(stKey => {
+                const stageInfo = PAYMENT_STAGES.find(s => s.k === stKey);
+                if (stageInfo) {
+                    const status = stageStatus[stKey];
+                    rowData[`${stageInfo.l}-應收`] = formatNum(status.exp);
+                    rowData[`${stageInfo.l}-已付`] = formatNum(status.paid);
+                    rowData[`${stageInfo.l}-未付`] = formatNum(status.unpaid);
+                }
+            });
+            exportData.push(rowData);
+        });
+        const ws = window.XLSX.utils.json_to_sheet(exportData); const wscols = [{wch: 10}, {wch: 10}, {wch: 15}];
+        selectedExportStages.forEach(() => { wscols.push({wch: 15}, {wch: 15}, {wch: 15}); });
+        ws['!cols'] = wscols;
+        const wb = window.XLSX.utils.book_new(); window.XLSX.utils.book_append_sheet(wb, ws, "期款清單匯出");
+        window.XLSX.writeFile(wb, `青森苑_期款清單匯出_${new Date().toISOString().slice(0,10).replace(/-/g,'')}.xlsx`);
+        setShowExportMenu(false);
+      };
+      const toggleExportStage = (stKey) => { setSelectedExportStages(prev => prev.includes(stKey) ? prev.filter(k => k !== stKey) : [...prev, stKey]); };
+
+      const handleCopyUnpaid = (stLabel, count, unitLabels) => {
+        const text = `${stLabel}款未付：${count}戶 (${unitLabels.join('、')})`;
+        const textArea = document.createElement("textarea"); textArea.value = text; document.body.appendChild(textArea);
+        textArea.select();
+        try { document.execCommand('copy'); setCopyStatus(stLabel); setTimeout(() => setCopyStatus(null), 1500); } catch (err) { console.error('Copy failed', err); }
+        document.body.removeChild(textArea);
+      };
+
+      if (isAuthLoading || (user && cloudStatus === "loading")) {
+        return ( <div className="min-h-screen flex items-center justify-center bg-[#F5F5F0]"><RefreshCw className="animate-spin text-[#8C9B90]" size={32} /></div> );
+      }
+
+      if (!user) {
+        return (
+          <div className="min-h-screen flex items-center justify-center bg-[#F5F5F0] p-4">
+            <div className="bg-white p-10 rounded-3xl shadow-2xl w-full max-w-md border border-[#D4C9B9]/20 text-center space-y-8">
+              <div className="flex justify-center"><div className="bg-[#8C9B90] p-4 rounded-2xl text-white shadow-lg"><Lock size={40} /></div></div>
+              <div><h1 className="text-2xl font-bold text-[#4A4A4A]">青森苑 案場管理系統</h1><p className="text-gray-400 text-sm mt-2 font-medium tracking-wide">請登入帳號以存取後台資料</p></div>
+              {authError && <div className="bg-red-50 text-red-600 px-4 py-2 rounded-lg text-xs font-bold">{authError}</div>}
+              <button onClick={handleGoogleLogin} className="w-full flex items-center justify-center gap-3 bg-white border border-gray-200 py-3.5 rounded-xl font-bold text-gray-600 hover:bg-gray-50 transition-all shadow-sm active:scale-95"><img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" className="w-5 h-5"/> 使用 Google 帳號登入</button>
+              <p className="text-[10px] text-gray-400 uppercase tracking-widest font-bold">Secure Cloud Synchronization Enabled</p>
+            </div>
+          </div>
+        );
+      }
+
+      return (
+        <div className="min-h-screen bg-[#F5F5F0] text-[#4A4A4A] pb-10 font-sans">
+          <header className="bg-white shadow-sm border-b sticky top-0 z-[60] px-4 py-3 flex justify-between items-center">
+            <div className="flex items-center gap-4">
+              <div className="flex items-center gap-2"><div className="bg-[#8C9B90] p-1.5 rounded-lg text-white"><Home size={20} /></div><h1 className="text-lg font-bold">青森苑系統</h1></div>
+              <div className="flex items-center gap-2 px-3 py-1 bg-gray-50 border rounded-full text-[10px] font-bold text-gray-500 uppercase">
+                <Database size={12} className={cloudStatus === "synced" ? "text-green-500" : "animate-spin text-orange-400"} />
+                {cloudStatus === "synced" ? "雲端已同步" : "載入中"}
+              </div>
+            </div>
+            <div className="flex items-center gap-3">
+              <div className="flex items-center bg-[#F5F5F0] p-1 rounded-full border border-gray-200 shadow-inner">
+                <button onClick={() => setSearchTerm('')} className={`px-4 py-1.5 rounded-full text-xs font-bold transition-all ${searchTerm === '' ? 'bg-white text-[#8C9B90] shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}>全部</button>
+                <button onClick={() => setSearchTerm('客變')} className={`px-4 py-1.5 rounded-full text-xs font-bold transition-all ${searchTerm === '客變' ? 'bg-purple-100 text-purple-700 shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}>客變</button>
+                <button onClick={() => setSearchTerm('換約')} className={`px-4 py-1.5 rounded-full text-xs font-bold transition-all ${searchTerm === '換約' ? 'bg-orange-100 text-orange-600 shadow-sm' : 'text-gray-400 hover:text-gray-600'}`}>換約</button>
+              </div>
+              {isAdmin && (
+                <>
+                  <div className="relative" ref={exportMenuRef}>
+                      <button onClick={() => setShowExportMenu(!showExportMenu)} className="bg-white border border-sky-600 text-sky-600 px-3 py-1.5 rounded-full text-[11px] font-bold hover:bg-sky-600 hover:text-white flex items-center gap-1 shadow-sm transition-all"><Download size={12} />匯出期款清單</button>
+                      {showExportMenu && (
+                          <div className="absolute top-full right-0 mt-2 w-56 bg-white border border-gray-200 rounded-xl shadow-xl z-50 overflow-hidden">
+                              <div className="bg-sky-50 px-4 py-2 border-b border-sky-100 flex items-center gap-2"><CheckSquare size={14} className="text-sky-600"/><span className="text-xs font-bold text-sky-800">勾選欲匯出的期款</span></div>
+                              <div className="max-h-60 overflow-y-auto p-2">
+                                  {PAYMENT_STAGES.map(st => (
+                                      <label key={st.k} className="flex items-center gap-2 px-2 py-1.5 hover:bg-gray-50 rounded cursor-pointer transition-colors">
+                                          <input type="checkbox" className="rounded text-sky-600 focus:ring-sky-500" checked={selectedExportStages.includes(st.k)} onChange={() => toggleExportStage(st.k)} />
+                                          <span className="text-xs text-gray-700">{st.l}</span>
+                                      </label>
+                                  ))}
+                              </div>
+                              <div className="p-2 border-t bg-gray-50"><button onClick={exportSelectedStagesToExcel} disabled={selectedExportStages.length === 0} className={`w-full py-1.5 rounded text-xs font-bold transition-all shadow-sm ${selectedExportStages.length > 0 ? 'bg-sky-600 text-white hover:bg-sky-700' : 'bg-gray-200 text-gray-400 cursor-not-allowed'}`}>匯出勾選項目</button></div>
+                          </div>
+                      )}
+                  </div>
+                  <button onClick={() => setShowAuthModal(true)} className="bg-white border border-[#8C9B90] text-[#8C9B90] px-3 py-1.5 rounded-full text-[11px] font-bold hover:bg-[#8C9B90] hover:text-white flex items-center gap-1 shadow-sm transition-all"><ShieldAlert size={12} />權限管理</button>
+                  <button onClick={() => setShowAddUnitModal(true)} className="bg-white border border-[#8C9B90] text-[#8C9B90] px-3 py-1.5 rounded-full text-[11px] font-bold hover:bg-[#8C9B90] hover:text-white flex items-center gap-1 shadow-sm transition-all"><Plus size={12} />雲端新增</button>
+                  <label className="cursor-pointer bg-[#8C9B90] text-white px-3 py-1.5 rounded-full text-[11px] font-bold flex items-center gap-1 shadow-sm hover:bg-[#7A8A7E] transition-all"><Upload size={12} /> 匯入 Excel<input type="file" accept=".xlsx, .xls, .csv" className="hidden" onChange={handleFileUpload} /></label>
+                </>
+              )}
+              <div className="flex items-center gap-2 pl-3 border-l ml-1">
+                <div className="flex flex-col items-end"><img src={user?.photoURL || 'https://www.gravatar.com/avatar/0?d=mp'} className="w-7 h-7 rounded-full border shadow-sm" title={user?.email} />{!isAdmin && <span className="text-[8px] text-gray-400 font-bold uppercase">瀏覽模式</span>}</div>
+                <button onClick={()=>signOut(auth)} className="p-1.5 text-gray-400 hover:text-red-500 transition-all"><LogOut size={18} /></button>
+              </div>
+            </div>
+          </header>
+
+          <div className="max-w-full mx-auto px-6 py-4">
+            <div className="flex flex-wrap gap-4 mb-4">
+              <div className="flex w-fit flex-wrap gap-x-6 gap-y-3 bg-white px-5 py-4 rounded-2xl shadow-sm border border-[#D4C9B9]/30">
+                <div className="flex items-center gap-2"><TrendingUp size={16} className="text-[#8C9B90]"/><div className="flex flex-col"><span className="text-[10px] text-gray-400 font-bold">總成交額</span><span className="font-bold text-base">{projectStats.total.toLocaleString()}</span></div></div>
+                <div className="flex items-center gap-2 border-l pl-6"><CreditCard size={16} className="text-green-500"/><div className="flex flex-col"><span className="text-[10px] text-gray-400 font-bold">累計實收</span><span className="font-bold text-base text-green-600">{projectStats.received.toLocaleString()}</span></div></div>
+                <div className="flex items-center gap-2 border-l pl-6 relative">
+                  <Clock size={16} className="text-orange-400"/><div className="flex flex-col"><span className="text-[10px] text-gray-400 font-bold flex items-center gap-1">未收餘額<button onClick={() => {setShowUnpaidDetails(!showUnpaidDetails); setExpandedStage(null);}} className="text-orange-500 hover:text-orange-700 transition-all active:scale-90" title="查看催收概況"><AlertCircle size={10} /></button></span><span className="font-bold text-base text-orange-500">{projectStats.outstanding.toLocaleString()}</span></div>
+                  {showUnpaidDetails && (
+                    <div className="absolute top-full left-0 mt-3 w-64 bg-white rounded-2xl shadow-xl border border-orange-100 z-[70] p-4 space-y-3 animate-in fade-in slide-in-from-top-1 duration-200">
+                      <div className="flex justify-between items-center border-b border-orange-50 pb-2"><h4 className="text-[11px] font-bold text-orange-600 flex items-center gap-1"><Search size={12}/>催收清單 (一鍵複製)</h4><button onClick={() => setShowUnpaidDetails(false)} className="text-gray-300 hover:text-gray-500"><X size={12}/></button></div>
+                      <div className="space-y-2 max-h-80 overflow-y-auto scrollbar-hide">
+                        {PAYMENT_STAGES.map(st => {
+                          const count = stageUnpaidCounts[st.k] || 0; const isExp = expandedStage === st.k;
+                          const unpaidUnits = isExp ? Object.entries(allUnitsPaymentStatus).filter(([_, status]) => status[st.k]?.unpaid > 0).map(([uKey, _]) => { const [f, u] = uKey.split('_'); return `${f}${u}`; }) : [];
+                          return (
+                            <div key={st.k} className="flex flex-col gap-1">
+                              <button onClick={() => setExpandedStage(isExp ? null : st.k)} className={`w-full flex justify-between items-center text-[10px] px-2 py-1.5 rounded-md transition-all ${count > 0 ? (isExp ? 'bg-orange-100 text-orange-800' : 'bg-orange-50 hover:bg-orange-100 text-orange-700') : 'bg-gray-50 text-gray-400 cursor-default'}`}><span className="font-medium flex items-center gap-1">{st.l}{count > 0 && (isExp ? <ChevronUp size={10}/> : <ChevronDown size={10}/>)}</span><span className={`font-bold ${count > 0 ? 'text-orange-600' : 'text-gray-300'}`}>{count}</span></button>
+                              {isExp && count > 0 && (
+                                <div className="mx-1 p-2 bg-white border border-orange-100 rounded-lg shadow-inner animate-in slide-in-from-top-1">
+                                    <div className="flex justify-between items-center border-b border-orange-50 pb-1 mb-1"><div className="text-[9px] font-bold text-orange-400 flex items-center gap-1"><Users size={10}/>未繳戶：</div><button onClick={() => handleCopyUnpaid(st.l, count, unpaidUnits)} className="p-1 hover:bg-orange-50 rounded transition-colors" title="複製文字內容">{copyStatus === st.l ? <Check size={10} className="text-green-500" /> : <Copy size={10} className="text-orange-400" />}</button></div>
+                                    <div className="flex flex-wrap gap-1.5 max-h-32 overflow-y-auto scrollbar-hide select-text">{unpaidUnits.map((u, idx) => ( <div key={idx} className="bg-gray-50 text-[9px] px-1.5 py-0.5 rounded border border-gray-200 text-gray-600 whitespace-nowrap">{u}</div> ))}</div>
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+              <div className="flex w-fit flex-wrap gap-x-6 gap-y-3 bg-white px-5 py-4 rounded-2xl shadow-sm border border-[#D4C9B9]/30">
+                <div className="flex items-center gap-2"><Layers size={16} className="text-sky-500"/><div className="flex flex-col"><span className="text-[10px] text-gray-400 font-bold">總戶數</span><span className="font-bold text-base">{projectStats.unitTotal} 戶</span></div></div>
+                <div className="flex items-center gap-2 border-l pl-6"><PieChart size={16} className="text-green-600"/><div className="flex flex-col"><span className="text-[10px] text-gray-400 font-bold">已售戶數</span><span className="font-bold text-base text-green-600">{projectStats.unitSold}</span></div></div>
+                <div className="flex items-center gap-2 border-l pl-6"><AlertCircle size={16} className="text-gray-300"/><div className="flex flex-col"><span className="text-[10px] text-gray-400 font-bold">待售戶數</span><span className="font-bold text-base text-gray-400">{projectStats.unitUnsold}</span></div></div>
+              </div>
+            </div>
+
+            <div className="flex overflow-x-auto gap-2 border-b border-gray-200 mb-2 scrollbar-hide">
+              {Object.keys(sheetsData).filter(t => !t.includes('匯款及發票明細') && !t.includes('預收款')).concat(isAdmin ? ["待開發票清單", "已開未收款明細"] : []).sort((a,b) => {
+                 if (a.includes('收款總表') && !b.includes('收款總表')) return -1;
+                 if (!a.includes('收款總表') && b.includes('收款總表')) return 1;
+                 const s = ["待開發票清單", "已開未收款明細"];
+                 if (s.includes(a) && !s.includes(b)) return 1;
+                 if (!s.includes(a) && s.includes(b)) return -1;
+                 if (s.includes(a) && s.includes(b)) return s.indexOf(a) - s.indexOf(b);
+                 return 0;
+              }).map(t => <button key={t} onClick={() => setActiveTab(t)} className={`px-4 py-2 rounded-t-xl font-bold text-[11px] transition-all whitespace-nowrap ${ activeTab === t ? 'bg-white text-[#8C9B90] border-t-2 border-l border-r border-[#8C9B90] shadow-sm' : 'text-gray-400 hover:text-gray-600' }`}>{t}</button>)}
+            </div>
+            
+            <div className="bg-white rounded-xl shadow-sm border overflow-hidden border-[#D4C9B9]/20 relative">
+              <div className="overflow-auto max-h-[65vh] scrollbar-hide">
+                {activeTab === "待開發票清單" ? (
+                  <table className="w-full text-left border-collapse">
+                    <thead className="sticky top-0 z-40 bg-[#F9F9F8] text-[10px] font-bold text-gray-500">
+                      <tr><th className="px-4 py-3 border-b text-center">操作</th><th className="px-4 py-3 border-b text-center">戶別</th><th className="px-4 py-3 border-b text-center">買方</th><th className="px-4 py-3 border-b text-center">收款日期</th><th className="px-4 py-3 border-b text-center">金額</th><th className="px-4 py-3 border-b text-center">來源類型</th></tr>
+                    </thead>
+                    <tbody className="divide-y text-[11px]">
+                      {uninvoicedPayments.length === 0 ? ( <tr><td colSpan="6" className="py-10 text-center text-gray-400 font-bold">目前無待開發票之項目</td></tr> ) : (
+                        uninvoicedPayments.map((p, idx) => (
+                          <tr key={idx} className="hover:bg-gray-50/50 transition-colors">
+                            <td className="px-4 py-2 text-center border-r"><button onClick={() => openUnitDetails(p.f, p.u, p.buyer)} className="text-[9px] bg-[#D4C9B9] text-white px-2 py-1 rounded-md shadow-sm hover:bg-[#8C9B90]">檢視</button></td>
+                            <td className="px-4 py-2 text-center font-bold text-[#8C9B90]">{p.f}{p.u}</td>
+                            <td className="px-4 py-2 text-center">{p.buyer || '-'}</td>
+                            <td className="px-4 py-2 text-center">{renderDateIfApplicable('日期', p.date)}</td>
+                            <td className="px-4 py-2 text-right font-bold text-emerald-600">{p.amt.toLocaleString()}</td>
+                            <td className="px-4 py-2 text-center"><span className={`px-2 py-0.5 rounded-full text-[9px] font-bold ${p.type === 'custom' ? 'bg-blue-50 text-blue-600' : 'bg-gray-100 text-gray-500'}`}>{p.type === 'custom' ? '自訂/手動' : '匯入檔案'}</span></td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                ) : activeTab === "已開未收款明細" ? (
+                  <table className="w-full text-left border-collapse">
+                    <thead className="sticky top-0 z-40 bg-[#F9F9F8] text-[10px] font-bold text-gray-500">
+                      <tr><th className="px-4 py-3 border-b text-center">操作</th><th className="px-4 py-3 border-b text-center">戶別</th><th className="px-4 py-3 border-b text-center">買方</th><th className="px-4 py-3 border-b text-center">發票日期</th><th className="px-4 py-3 border-b text-center">發票號碼</th><th className="px-4 py-3 border-b text-center">款項類型</th><th className="px-4 py-3 border-b text-right">發票金額</th><th className="px-4 py-3 border-b text-right">已收金額</th><th className="px-4 py-3 border-b text-right">未收餘額</th></tr>
+                    </thead>
+                    <tbody className="divide-y text-[11px]">
+                      {unpaidInvoicesList.length === 0 ? ( <tr><td colSpan="9" className="py-10 text-center text-gray-400 font-bold">目前無已開立但未收齊款項之發票</td></tr> ) : (
+                        unpaidInvoicesList.map((p, idx) => (
+                          <tr key={idx} className="hover:bg-gray-50/50 transition-colors">
+                            <td className="px-4 py-2 text-center border-r"><button onClick={() => openUnitDetails(p.f, p.u, p.buyer)} className="text-[9px] bg-[#D4C9B9] text-white px-2 py-1 rounded-md shadow-sm hover:bg-[#8C9B90]">檢視</button></td>
+                            <td className="px-4 py-2 text-center font-bold text-[#8C9B90]">{p.f}{p.u}</td>
+                            <td className="px-4 py-2 text-center">{p.buyer || '-'}</td>
+                            <td className="px-4 py-2 text-center">{renderDateIfApplicable('日期', p.date)}</td>
+                            <td className="px-4 py-2 text-center font-mono font-bold text-sky-700">{p.num}</td>
+                            <td className="px-4 py-2 text-center"><span className={`px-2 py-0.5 rounded-full text-[9px] font-bold ${p.isLand ? 'bg-amber-50 text-amber-600' : 'bg-sky-50 text-sky-600'}`}>{p.isLand ? '土地款' : '房屋款'}</span></td>
+                            <td className="px-4 py-2 text-right font-bold text-gray-700">{p.targetAmt.toLocaleString()}</td>
+                            <td className="px-4 py-2 text-right font-bold text-emerald-600">{p.received.toLocaleString()}</td>
+                            <td className="px-4 py-2 text-right font-bold text-red-500">{p.unpaid.toLocaleString()}</td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                ) : (
+                  <table className="w-full text-left border-collapse">
+                    <thead className="sticky top-0 z-40 bg-[#F9F9F8] text-[10px] font-bold text-gray-500">
+                      <tr>
+                        <th className="px-1 py-3 border-b text-center sticky left-0 bg-[#F9F9F8] z-50 col-action">操作</th>
+                        {currentColumns.map((c, i) => {
+                          const isSticky = ['樓層', '編號', '買方', '成交總價'].includes(c);
+                          const leftPos = c==='樓層'?'44px':c==='編號'?'89px':c==='買方'?'134px':c==='成交總價'?'244px':'0px';
+                          const colClass = c==='樓層'?'col-floor':c==='編號'?'col-unit':c==='買方'?'col-buyer':c==='成交總價'?'col-total':'';
+                          return <th key={i} className={`px-2 py-3 border-b text-center ${colClass} ${isSticky ? 'sticky z-50 bg-[#F9F9F8] border-r sticky-shadow' : ''}`} style={isSticky?{left:leftPos}:{}}>{c}</th>
+                        })}
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y text-[11px]">
+                      {combinedData.map((row, idx) => {
+                          const uInfo = parseUnitInfo(row); const unitKey = `${uInfo.f}_${uInfo.u}`;
+                          const isM = rowSpans[unitKey] > 1; const isF = !isM || idx === 0 || `${normStr(combinedData[idx-1]['樓層'])}_${normStr(combinedData[idx-1]['編號'])}` !== unitKey;
+                          const span = rowSpans[unitKey] || 1; const isTransfer = transferUnitKeys.has(unitKey);
+                          return (
+                            <tr key={idx} className="hover:bg-gray-50/50 transition-colors">
+                              {isF && <td rowSpan={span} className="px-1 py-2 border-r text-center sticky left-0 bg-white z-30 sticky-shadow align-middle"><button onClick={() => openUnitDetails(uInfo.f, uInfo.u, uInfo.b)} className="text-[9px] bg-[#D4C9B9] text-white px-2 py-1 rounded-md shadow-sm hover:bg-[#8C9B90]">檢視</button></td>}
+                              {currentColumns.map((col, i) => {
+                                  const isSticky = ['樓層', '編號', '買方', '成交總價'].includes(col);
+                                  const leftPos = col==='樓層'?'44px':col==='編號'?'89px':col==='買方'?'134px':col==='成交總價'?'244px':'0px';
+                                  const colClass = col==='樓層'?'col-floor':col==='編號'?'col-unit':col==='買方'?'col-buyer':col==='成交總價'?'col-total':'';
+                                  if (isSticky && !isF) return null;
+                                  const rawVal = row[col]; const isMeta = ['手機', '日期', '日', '編號', '樓層', '號碼', '郵遞區號', '通訊地址', '備註'].some(ex => col.includes(ex));
+                                  const displayVal = isMeta ? renderDateIfApplicable(col, rawVal) : formatNum(rawVal);
+                                  const stageKey = getStageKeyForColumn(col); let isUnpaidStage = false;
+                                  if (stageKey && allUnitsPaymentStatus[unitKey]) { const status = allUnitsPaymentStatus[unitKey][stageKey]; if (status && status.exp > 0 && status.unpaid > 0) isUnpaidStage = true; }
+                                  return (
+                                    <td key={i} rowSpan={isSticky?span:1} className={`px-2 py-2 border-r ${colClass} ${getAlignClass(col, row[col])} ${isSticky ? 'sticky z-20 bg-white align-middle' : ''} ${col==='買方'?'font-bold text-[#8C9B90]':''} ${isUnpaidStage ? 'bg-red-50 text-red-600 font-medium' : ''} whitespace-pre-wrap`} style={isSticky?{left:leftPos}:{}}>
+                                      {displayVal}
+                                      {col === '買方' && isTransfer && <span className="ml-1 px-1 bg-orange-100 text-orange-600 text-[9px] font-bold rounded">換</span>}
+                                    </td>
+                                  );
+                              })}
+                            </tr>
+                          );
+                      })}
+                    </tbody>
+                    {!activeTab.includes('客戶') && !activeTab.match(/換約|讓渡/) && (
+                      <tfoot className="sticky bottom-0 z-40 bg-[#F1F3F1] font-bold text-[10px] sticky-bottom-shadow">
+                        <tr>
+                          <td className="px-1 py-3 text-center border-r bg-[#F1F3F1] sticky left-0 z-50">合計</td>
+                          {currentColumns.map((c, i) => {
+                            const isSticky = ['樓層', '編號', '買方', '成交總價'].includes(c);
+                            const leftPos = c==='樓層'?'44px':c==='編號'?'89px':c==='買方'?'134px':c==='成交總價'?'244px':'0px';
+                            const colClass = c==='買方'?'col-buyer':c==='成交總價'?'col-total':'';
+                            return ( <td key={i} className={`px-2 py-3 border-r ${colClass} text-right ${isSticky ? 'sticky z-50 bg-[#F1F3F1] border-r' : ''}`} style={isSticky ? { left: leftPos } : {}}> {totalsData[c] ? totalsData[c].toLocaleString() : ''} </td> );
+                          })}
+                        </tr>
+                      </tfoot>
+                    )}
+                  </table>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {selectedUnit && (
+            <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm">
+              <div className="bg-white rounded-3xl shadow-2xl w-full max-w-5xl max-h-[90vh] flex flex-col overflow-hidden">
+                <div className="flex justify-between items-center px-6 py-4 border-b bg-[#F9F9F8]">
+                  <div className="flex items-center gap-4">
+                    <div className="bg-[#8C9B90] text-white text-2xl font-bold h-14 px-5 rounded-xl flex items-center justify-center shadow-inner">{selectedUnit.基本資料.樓層}{selectedUnit.基本資料.編號}</div>
+                    <div className="flex flex-col gap-1">
+                      <h2 className="text-xl font-bold flex flex-wrap items-center gap-2">
+                          {isEditingMode ? <input className="border px-2 py-1 rounded w-28 text-base" value={selectedUnit.基本資料.買方} onChange={e=>setSelectedUnit({...selectedUnit, 基本資料:{...selectedUnit.基本資料, 買方:e.target.value}})}/> : (selectedUnit.基本資料.買方||'未填寫')}
+                          {!isEditingMode && selectedUnit.基本資料.車位 && <span className="text-sm font-normal text-blue-600 bg-blue-50 px-2.5 py-0.5 rounded-md border border-blue-200 ml-1">車位: {normStr(selectedUnit.基本資料.車位)}</span>}
+                          {!isEditingMode && selectedUnit.基本資料.預收款 && (
+                            <label className={`text-sm font-normal px-2.5 py-0.5 rounded-md border flex items-center gap-1.5 cursor-pointer transition-all ${selectedUnit.基本資料.優先預收 ? 'text-purple-700 bg-purple-50 border-purple-200 shadow-sm' : 'text-amber-600 bg-amber-50 border-amber-200'}`} title="打勾後，當累計金額達使照款且足夠付清預收時，系統將優先從最新一筆匯款中自動扣抵">
+                              <input 
+                                type="checkbox" 
+                                disabled={!isAdmin}
+                                checked={!!selectedUnit.基本資料.優先預收}
+                                onChange={async (e) => {
+                                  const newVal = e.target.checked;
+                                  const uK = `${selectedUnit.基本資料.樓層}_${selectedUnit.基本資料.編號}`;
+                                  const updatedUnitInfo = { ...selectedUnit.基本資料, 優先預收: newVal };
+                                  const existingUnitData = customData.units?.[uK] || {};
+                                  const updatedUnits = { ...customData.units, [uK]: { ...existingUnitData, 基本資料: updatedUnitInfo } };
+                                  await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'custom', 'additions'), { units: updatedUnits }, { merge: true });
+                                  setSelectedUnit({ ...selectedUnit, 基本資料: updatedUnitInfo });
+                                }}
+                                className="rounded text-purple-600 focus:ring-purple-500 w-3 h-3 cursor-pointer"
+                              />
+                              預收代書款: {formatNum(selectedUnit.基本資料.預收款)}
+                              {selectedUnit.基本資料.優先預收 && <span className="text-[10px] font-bold bg-purple-200 text-purple-800 px-1 rounded">優先扣抵</span>}
+                            </label>
+                          )}
+                          {getDoorplateAddress(selectedUnit.基本資料.樓層, selectedUnit.基本資料.編號) && ( <span className="text-sm font-normal text-gray-500 bg-gray-100 px-2.5 py-0.5 rounded-md border border-gray-200 select-all flex items-center gap-1"> <MapPin size={14}/> {getDoorplateAddress(selectedUnit.基本資料.樓層, selectedUnit.基本資料.編號)} </span> )}
+                      </h2>
+                      <p className="text-xs text-[#8C9B90] uppercase font-bold tracking-widest mt-1">{isAdmin ? '管理員模式' : '瀏覽模式'}</p>
+                    </div>
+                  </div>
+                  <div className="flex gap-3">
+                    {isAdmin && ( <button onClick={isEditingMode ? saveClientEdits : ()=>setIsEditingMode(true)} className={`px-4 py-2 rounded-full text-sm font-bold transition-all ${isEditingMode?'bg-green-600 text-white shadow-lg scale-105':'bg-white border hover:bg-gray-50'}`}> {isEditingMode ? <span className="flex items-center gap-1"><Save size={16}/>儲存退出</span> : '✏️ 編輯資料'} </button> )}
+                    <button onClick={()=>{setSelectedUnit(null);setIsEditingMode(false);}} className="text-gray-400 hover:bg-gray-100 p-2.5 rounded-full transition-all"><X size={24}/></button>
+                  </div>
+                </div>
+                <div className="flex-1 overflow-y-auto p-6 bg-gray-50/50 scrollbar-hide space-y-6">
+                  <div className="bg-white p-5 rounded-2xl border shadow-sm">
+                    <h3 className="text-sm font-bold text-[#8C9B90] mb-4 border-b pb-2 flex items-center gap-2"><User size={16}/>聯絡資料</h3>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-x-10 gap-y-3">
+                      {(() => {
+                        const items = { ...selectedUnit.客戶資料 }; const zip = items['郵遞區號'] || '', addr = items['通訊地址'] || '';
+                        const staticFields = ['樓層','編號','買方'];
+                        const fields = Object.entries(items).filter(([k,v]) => !staticFields.includes(normStr(k)) && !k.startsWith('__EMPTY') && !['郵遞區號','通訊地址'].includes(k) && (isEditingMode || (v && String(v).trim() !== ""))).map(([k,v])=>(
+                          <div key={k} className="flex justify-between items-center text-sm border-b border-gray-50 pb-2 px-3"><span className="text-gray-400">{k}</span>{isEditingMode ? <input className="border px-2 py-1 rounded text-center w-2/3" value={v} onChange={e=>{ const newCust = {...selectedUnit.客戶資料, [k]: e.target.value}; setSelectedUnit({...selectedUnit, 客戶資料: newCust}); }}/> : <span className={`font-medium whitespace-pre-wrap ${getAlignClass(k, v)}`}>{renderDateIfApplicable(k,v)}</span>}</div>
+                        ));
+                        if (isEditingMode || zip || addr) {
+                          fields.push(<div key="merged" className="flex justify-between items-center text-sm border-b border-gray-50 pb-2 px-3 md:col-span-1"><span className="text-gray-400">通訊地址</span>{isEditingMode ? <div className="flex gap-1 w-2/3"><input className="border px-2 py-1 rounded w-1/4 text-center" placeholder="郵編" value={zip} onChange={e=>setSelectedUnit({...selectedUnit, 客戶資料:{...selectedUnit.客戶資料, 郵遞區號:e.target.value}})}/><input className="border px-2 py-1 rounded flex-1" placeholder="地址" value={addr} onChange={e=>setSelectedUnit({...selectedUnit, 客戶資料:{...selectedUnit.客戶資料, 通訊地址:e.target.value}})}/></div> : <span className="font-medium text-center whitespace-pre-wrap">{zip?`[${zip}] `:''}{addr}</span>}</div>);
+                        }
+                        return fields;
+                      })()}
+                    </div>
+                  </div>
+
+                  {selectedUnit.換約前手 && (
+                    <div className="bg-orange-50/50 p-5 rounded-2xl border border-orange-100 shadow-sm">
+                      <h3 className="text-sm font-bold text-orange-600 mb-4 border-b border-orange-100 pb-2 flex items-center gap-2"><RefreshCw size={16}/>換約讓渡紀錄</h3>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-x-10 gap-y-3 text-sm">
+                        <div className="flex justify-between border-b border-orange-50 pb-2 text-center"><span className="text-orange-400">讓渡日期</span><span className="font-medium text-orange-700">{renderDateIfApplicable('讓渡日期', selectedUnit.換約前手.日期)}</span></div>
+                        <div className="flex justify-between border-b border-orange-50 pb-2 text-center"><span className="text-orange-400">前手姓名</span><span className="font-medium text-orange-700">{selectedUnit.換約前手.姓名}</span></div>
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="bg-white p-5 rounded-2xl border shadow-sm">
+                    <h3 className="text-sm font-bold text-[#8C9B90] mb-4 border-b pb-2 flex items-center gap-2"><DollarSign size={16}/>財務款項沖銷明細</h3>
+                    <div className="overflow-x-auto"><table className="w-full text-xs border-separate border-spacing-y-1.5"><thead><tr className="text-gray-400 font-bold"><th className="text-center py-2">階段</th><th className="text-center px-2">房屋款</th><th className="text-center px-2">土地款</th><th className="text-center px-2">應付合計</th><th className="text-center px-2 text-[#8C9B90]">已收實沖</th><th className="text-center px-2 text-red-500">尚欠餘額</th><th className="text-center">狀態</th></tr></thead><tbody>
+                      {(() => {
+                        const house = selectedUnit.財務款項.house || {}; const land = selectedUnit.財務款項.land || {};
+                        const receipts = (selectedUnit.匯款紀錄 || []).reduce((s,r) => s + (parseFloat(String(r[Object.keys(r).find(k=>k.includes('金額'))||'金額']).replace(/,/g,''))||0), 0);
+                        const charges = (selectedUnit.客變紀錄 || []).reduce((s,r) => s + (Number(r.客變金額)||0), 0);
+                        let rem = receipts; const prepay = parseFloat(String(selectedUnit.基本資料.預收款).replace(/,/g, '')) || 0;
+                        
+                        let expBeforeShiZhao = charges;
+                        PAYMENT_STAGES.forEach(st => {
+                            if (['客變', '使照', '銀貸', '交屋'].includes(st.k)) return;
+                            const kMatchH = Object.keys(house).find(x=>x.includes(st.k) && !x.includes('總價'));
+                            const kMatchL = Object.keys(land).find(x=>x.includes(st.k) && !x.includes('總價'));
+                            expBeforeShiZhao += (kMatchH ? (parseFloat(String(house[kMatchH]).replace(/,/g,''))||0) : 0);
+                            expBeforeShiZhao += (kMatchL ? (parseFloat(String(land[kMatchL]).replace(/,/g,''))||0) : 0);
+                        });
+
+                        const isPrioritizePrepay = selectedUnit.基本資料?.優先預收;
+                        const canPrioritizePrepay = isPrioritizePrepay && (receipts >= expBeforeShiZhao + prepay);
+                        
+                        if (canPrioritizePrepay) {
+                            rem = Math.max(0, rem - prepay);
+                        }
+
+                        const displayStages = [ { k: '客變', l: '客變費用' }, { k: '成交', l: '合約總價' }, ...PAYMENT_STAGES.filter(st => st.k !== '客變') ];
+                        return displayStages.map(st => {
+                          let exp=0,hA=0,lA=0;
+                          if (st.k === '客變') exp=charges; else { 
+                            const kMatchH = Object.keys(house).find(x=>x.includes(st.k) && (st.k==='成交'?!x.includes('總價'):true));
+                            const kMatchL = Object.keys(selectedUnit.財務款項.land || {}).find(x=>x.includes(st.k) && (st.k==='成交'?!x.includes('總價'):true));
+                            hA = kMatchH ? (parseFloat(String(house[kMatchH]).replace(/,/g,''))||0) : 0; 
+                            lA = kMatchL ? (parseFloat(String((selectedUnit.財務款項.land || {})[kMatchL]).replace(/,/g,''))||0) : 0; 
+                            exp=hA+lA; 
+                          }
+                          if (exp<=0 && st.k!=='成交') return null;
+                          
+                          let paid=0; if (st.k!=='成交') { if(rem>=exp) { paid=exp; rem-=exp; } else { paid=rem; rem=0; } }
+                          if (st.k === '使照' && !canPrioritizePrepay) rem = Math.max(0, rem - prepay);
+                          
+                          return (
+                            <tr key={st.k} className={`${st.k==='成交'?'bg-gray-50':st.k==='客變'?'bg-purple-50':paid>=exp?'bg-green-50/70':paid>0?'bg-orange-50/70':'hover:bg-gray-50/30'} rounded-lg transition-all`}>
+                                <td className={`py-2.5 px-2 font-bold text-center ${st.k==='客變'?'text-purple-700':''}`}>{st.l}</td>
+                                <td className="text-right px-2 text-sky-700">{hA ? hA.toLocaleString() : (st.k==='客變' ? '-' : '')}</td>
+                                <td className="text-right px-2 text-amber-700">{lA ? lA.toLocaleString() : (st.k==='客變' ? '-' : '')}</td>
+                                <td className="text-right px-2 font-bold">{exp?exp.toLocaleString():''}</td>
+                                <td className="text-right px-2 text-green-600 font-bold">{st.k==='成交'?'':paid.toLocaleString()}</td>
+                                <td className="text-right px-2 text-red-500">{st.k==='成交'?'':(exp-paid).toLocaleString()}</td>
+                                <td className="text-center px-2">{st.k==='成交'?'':(paid>=exp?<span className={`px-2.5 py-1 rounded-full text-[10px] font-bold ${st.k==='客變'?'bg-purple-100 text-purple-700':'bg-green-100 text-green-700'}`}>已清</span>:paid>0?<span className="bg-orange-100 text-orange-700 px-2.5 py-1 rounded-full text-[10px] font-bold">未清</span>:<span className="text-gray-300">待付</span>)}</td>
+                            </tr>
+                          );
+                        });
+                      })()}
+                    </tbody></table></div>
+
+                    {/* === 升級版：尾款(銀貸/交屋)預開發票獨立區塊 (支援多筆與土地款、金額管理與提示) === */}
+                    <div className="mt-4 bg-sky-50/60 p-3 rounded-xl border border-sky-100 flex flex-col gap-3">
+                      <div className="flex items-center justify-between border-b border-sky-100/50 pb-2">
+                        <div className="flex items-center gap-2">
+                          <FileText size={16} className="text-sky-600"/>
+                          <div className="flex flex-col">
+                            <span className="text-xs font-bold text-sky-700">尾款 (銀貸/交屋) 預開發票清單</span>
+                            <span className="text-[10px] text-sky-500">適用於先開發票、尚未收到匯款的情況</span>
+                          </div>
+                        </div>
+                        {isEditingMode && (
+                          <button onClick={() => {
+                            const currentList = selectedUnit.基本資料.預開發票清單 || [];
+                            setSelectedUnit({...selectedUnit, 基本資料: {...selectedUnit.基本資料, 預開發票清單: [...currentList, {日期:'', 號碼:'', 金額:'', 土地款:false, id: Date.now().toString()}]}});
+                          }} className="text-[10px] bg-sky-600 text-white px-2 py-1 rounded shadow-sm hover:bg-sky-700 transition-colors">+ 新增預開</button>
+                        )}
+                      </div>
+                      <div className="flex flex-col gap-2">
+                        {(!selectedUnit.基本資料.預開發票清單 || selectedUnit.基本資料.預開發票清單.length === 0) && (
+                          <div className="text-[11px] text-sky-600/60 italic px-1">尚未登記任何預開發票</div>
+                        )}
+                        {(selectedUnit.基本資料.預開發票清單 || []).map((inv, idx) => {
+                          const matchedReceived = preOpenReceivedMap[String(inv.號碼).trim().toUpperCase()] || 0;
+                          const targetAmt = parseFloat(String(inv.金額 || '').replace(/,/g, '')) || 0;
+                          return (
+                            <div key={inv.id || idx} className="flex flex-wrap items-center gap-x-4 gap-y-2 bg-white/60 p-2 rounded border border-sky-100">
+                              <div className="flex items-center gap-1.5">
+                                <span className="text-[11px] text-sky-600 font-bold">發票日期</span>
+                                {isEditingMode ? (
+                                  <input className="border border-sky-200 px-2 py-1 rounded text-xs w-24 text-center outline-none focus:ring-1 focus:ring-sky-400" placeholder="115/06/16" value={inv.日期 || ''} onChange={e => {
+                                    const newList = [...selectedUnit.基本資料.預開發票清單];
+                                    newList[idx] = { ...newList[idx], 日期: e.target.value };
+                                    setSelectedUnit({...selectedUnit, 基本資料: {...selectedUnit.基本資料, 預開發票清單: newList}});
+                                  }} />
+                                ) : (
+                                  <span className="text-xs font-bold text-sky-800">{inv.日期 || '-'}</span>
+                                )}
+                              </div>
+                              <div className="flex items-center gap-1.5">
+                                <span className="text-[11px] text-sky-600 font-bold">發票號碼</span>
+                                {isEditingMode ? (
+                                  <input className="border border-sky-200 px-2 py-1 rounded text-xs w-28 font-mono uppercase outline-none focus:ring-1 focus:ring-sky-400" placeholder="發票號碼" value={inv.號碼 || ''} onChange={e => {
+                                    const newList = [...selectedUnit.基本資料.預開發票清單];
+                                    newList[idx] = { ...newList[idx], 號碼: e.target.value };
+                                    setSelectedUnit({...selectedUnit, 基本資料: {...selectedUnit.基本資料, 預開發票清單: newList}});
+                                  }} />
+                                ) : (
+                                  <span className={`text-xs font-mono font-bold px-2 py-1 rounded ${inv.號碼 ? 'bg-white text-sky-800 border border-sky-200 shadow-sm' : 'text-sky-400'}`}>
+                                    {inv.號碼 || '尚未開立'}
+                                  </span>
+                                )}
+                              </div>
+                              <div className="flex items-center gap-1.5">
+                                <span className="text-[11px] text-sky-600 font-bold">金額</span>
+                                {isEditingMode ? (
+                                  <input className="border border-sky-200 px-2 py-1 rounded text-xs w-24 text-right outline-none focus:ring-1 focus:ring-sky-400" placeholder="金額" value={inv.金額 || ''} onChange={e => {
+                                    const newList = [...selectedUnit.基本資料.預開發票清單];
+                                    newList[idx] = { ...newList[idx], 金額: e.target.value };
+                                    setSelectedUnit({...selectedUnit, 基本資料: {...selectedUnit.基本資料, 預開發票清單: newList}});
+                                  }} />
+                                ) : (
+                                  <span className="text-xs font-bold text-sky-800">{inv.金額 ? formatNum(inv.金額) : '-'}</span>
+                                )}
+                              </div>
+                              <label className="flex items-center gap-1.5 cursor-pointer ml-1">
+                                <input type="checkbox" disabled={!isEditingMode} checked={!!inv.土地款} onChange={e => {
+                                  const newList = [...selectedUnit.基本資料.預開發票清單];
+                                  newList[idx] = { ...newList[idx], 土地款: e.target.checked };
+                                  setSelectedUnit({...selectedUnit, 基本資料: {...selectedUnit.基本資料, 預開發票清單: newList}});
+                                }} className="rounded text-sky-600 focus:ring-sky-500 w-3 h-3 cursor-pointer disabled:opacity-50" />
+                                <span className={`text-[11px] font-bold ${inv.土地款 ? 'text-amber-700' : 'text-sky-700'}`}>土地款</span>
+                              </label>
+
+                              {/* 沖銷及全額收款狀態顯示 */}
+                              {inv.號碼 && targetAmt > 0 && (
+                                <div className="flex items-center gap-1.5 ml-1">
+                                  {matchedReceived >= targetAmt ? (
+                                    <span className="text-[10px] font-bold bg-green-100 text-green-700 px-2 py-0.5 rounded border border-green-200 flex items-center gap-0.5" title={`已收金額: ${formatNum(matchedReceived)}`}>
+                                      <Check size={10}/> 已收全額款項
+                                    </span>
+                                  ) : (
+                                    <span className="text-[10px] font-bold bg-red-50 text-red-500 px-2 py-0.5 rounded border border-red-100" title={`未收足額。預開金額: ${formatNum(targetAmt)} / 目前累計收到: ${formatNum(matchedReceived)}`}>
+                                      尚欠: {formatNum(targetAmt - matchedReceived)}
+                                    </span>
+                                  )}
+                                </div>
+                              )}
+
+                              {isEditingMode && (
+                                <button onClick={() => {
+                                  const newList = selectedUnit.基本資料.預開發票清單.filter((_, i) => i !== idx);
+                                  setSelectedUnit({...selectedUnit, 基本資料: {...selectedUnit.基本資料, 預開發票清單: newList}});
+                                }} className="ml-auto text-red-400 hover:text-red-600 transition-colors p-1"><Trash2 size={12}/></button>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                    {/* ==================================== */}
+
+                  </div>
+
+                  <div className="bg-white p-5 rounded-2xl border shadow-sm">
+                    <h3 className="text-sm font-bold text-[#8C9B90] mb-4 border-b pb-2 flex items-center gap-2"><FileText size={16}/>匯款紀錄管理</h3>
+                    <table className="w-full text-xs border-separate border-spacing-y-1.5">
+                      <thead>
+                        <tr><th className="text-center py-2 bg-emerald-50 text-emerald-700 rounded-l-md font-bold">匯款日期</th><th className="text-center px-2 bg-emerald-50 text-emerald-700 font-bold">實收金額</th><th className="text-center py-2 bg-orange-50 text-orange-700 font-bold">發票日期</th><th className="text-center px-2 bg-orange-50 text-orange-700 rounded-r-md font-bold">發票號碼</th>{isAdmin && <th className="text-center text-gray-400 font-bold w-16">操作</th>}</tr>
+                      </thead>
+                      <tbody>
+                      {(() => {
+                        const prepayAmount = parseFloat(String(selectedUnit.基本資料.預收款).replace(/,/g, '')) || 0;
+                        const houseForExp = selectedUnit.財務款項.house || {}; const landForExp = selectedUnit.財務款項.land || {};
+                        const chargesForExp = (selectedUnit.客變紀錄 || []).reduce((s,r) => s + (Number(r.客變金額)||0), 0);
+                        
+                        let expBeforeShiZhao = chargesForExp;
+                        PAYMENT_STAGES.forEach(st => {
+                            if (['客變', '使照', '銀貸', '交屋'].includes(st.k)) return;
+                            const kMatchH = Object.keys(houseForExp).find(x=>x.includes(st.k) && !x.includes('總價'));
+                            const kMatchL = Object.keys(landForExp).find(x=>x.includes(st.k) && !x.includes('總價'));
+                            expBeforeShiZhao += (kMatchH ? (parseFloat(String(houseForExp[kMatchH]).replace(/,/g,''))||0) : 0);
+                            expBeforeShiZhao += (kMatchL ? (parseFloat(String(landForExp[kMatchL]).replace(/,/g,''))||0) : 0);
+                        });
+
+                        const records = selectedUnit.匯款紀錄 || [];
+                        const totalReceipts = records.reduce((s,r) => s + (parseFloat(String(r[Object.keys(r).find(k=>k.includes('金額'))||'金額']).replace(/,/g,''))||0), 0);
+                        
+                        const isPrioritizePrepay = selectedUnit.基本資料?.優先預收;
+                        const canPrioritizePrepay = isPrioritizePrepay && (totalReceipts >= expBeforeShiZhao + prepayAmount);
+
+                        let prepayAllocations = {}; 
+                        let unallocated = prepayAmount;
+
+                        
+                        if (canPrioritizePrepay) {
+                        // 第一階段：優先尋找「完全落在使照階段後，且金額剛好等於預收款」的獨立匯款紀錄
+                        let runningForMatch = 0;
+                        for (let i = 0; i < records.length; i++) {
+                          const r = records[i];
+                          const rawAmt = parseFloat(String(r[Object.keys(r).find(k=>k.includes('金額'))||'金額']).replace(/,/g,''))||0;
+                          const previousRunning = runningForMatch;
+                          runningForMatch += rawAmt;
+                          
+                          // 條件：累計金額已跨入使照、且單筆匯款剛好等於未分配的預收款
+                          if (unallocated > 0 && previousRunning >= expBeforeShiZhao && rawAmt === unallocated) {
+                            prepayAllocations[r._id] = unallocated;
+                            unallocated = 0;
+                            break; 
+                          }
+                        }
+                      
+                        // 第二階段：如果客戶是合併匯款（找不到剛好等於預收款的紀錄），則恢復「由舊到新」依序提撥
+                        let running = 0;
+                        for (let i = 0; i < records.length; i++) {
+                          const r = records[i];
+                          const rawAmt = parseFloat(String(r[Object.keys(r).find(k=>k.includes('金額'))||'金額']).replace(/,/g,''))||0;
+                          running += rawAmt;
+                          
+                          // 避開已經被第一階段扣抵的紀錄
+                          if (unallocated > 0 && running > expBeforeShiZhao && !prepayAllocations[r._id]) {
+                            const available = Math.min(rawAmt, running - expBeforeShiZhao);
+                            const allocate = Math.min(unallocated, available);
+                            prepayAllocations[r._id] = allocate;
+                            unallocated -= allocate;
+                          }
+                        }
+                      } else {
+                            // 正常邏輯：等匯款超過「使照款」門檻後，依序（由前至後）提撥預收款
+                            let expBeforePrepayNormal = expBeforeShiZhao;
+                            const kMatchH = Object.keys(houseForExp).find(x=>x.includes('使照') && !x.includes('總價'));
+                            const kMatchL = Object.keys(landForExp).find(x=>x.includes('使照') && !x.includes('總價'));
+                            expBeforePrepayNormal += (kMatchH ? (parseFloat(String(houseForExp[kMatchH]).replace(/,/g,''))||0) : 0);
+                            expBeforePrepayNormal += (kMatchL ? (parseFloat(String(landForExp[kMatchL]).replace(/,/g,''))||0) : 0);
+
+                            let running = 0;
+                            for (let i = 0; i < records.length; i++) {
+                                const r = records[i];
+                                const rawAmt = parseFloat(String(r[Object.keys(r).find(k=>k.includes('金額'))||'金額']).replace(/,/g,''))||0;
+                                running += rawAmt;
+                                if (unallocated > 0 && running > expBeforePrepayNormal) {
+                                    const available = Math.min(rawAmt, running - expBeforePrepayNormal);
+                                    const allocate = Math.min(unallocated, available);
+                                    prepayAllocations[r._id] = allocate;
+                                    unallocated -= allocate;
+                                }
+                            }
+                        }
+
+                        return records.map((r,i) => {
+                            const rawAmt = parseFloat(String(r[Object.keys(r).find(k=>k.includes('金額'))||'金額']).replace(/,/g,''))||0;
+                            const splitPrepay = prepayAllocations[r._id] || 0;
+                            const amt = rawAmt - splitPrepay;
+                            const rK = r._id; const cD = firebaseInvoices[rK] || {};
+                            const handleDelete = async ()=>{
+                                if(!confirm("確定要刪除這筆匯款紀錄嗎？"))return;
+                                if(r._isImported) await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'custom', 'additions'), { deletedImportedRemittances: arrayUnion(r._id) }, { merge: true });
+                                else {
+                                    const inArchived = archivedRemittances.some(x => x.id === r.id);
+                                    if (inArchived) { const uA = archivedRemittances.filter(x => x.id !== r.id); await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'custom', 'archived'), { remittances: uA }, { merge: true }); } 
+                                    else { const uR = (customData.remittances || []).filter(x=>x.id!==r.id); await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'custom', 'additions'), { remittances: uR }, { merge: true }); }
+                                }
+                                setSelectedUnit({...selectedUnit, 匯款紀錄: selectedUnit.匯款紀錄.filter(x=>x._id !== r._id)});
+                            };
+
+                            const renderTr = (amount, isPrepay) => {
+                                if (amount <= 0) return null;
+                                const hasDeleteBtn = isAdmin && (!isPrepay || amt <= 0);
+                                if (isPrepay) {
+                                    return (
+                                        <tr key={`${i}-prepay`} className="hover:opacity-80 transition-all bg-amber-50/50">
+                                            <td className="px-2 py-2.5 text-center bg-amber-50/70 rounded-l-md border-l-2 border-amber-400">{renderDateIfApplicable('日期',r[Object.keys(r).find(k=>k.includes('日期'))||'日期'])} <span className="ml-1 text-[10px] bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded font-bold">預收</span></td>
+                                            <td className="text-right px-2 font-bold bg-amber-50/70 text-amber-900">{amount.toLocaleString()}</td>
+                                            <td className="px-2 bg-gray-50/50 text-center text-gray-400 text-[10px]">免開立發票</td>
+                                            <td className="px-2 bg-gray-50/50 text-center text-gray-400 rounded-r-md text-[10px]">-</td>
+                                            {isAdmin && <td className="text-center">{hasDeleteBtn && <button onClick={handleDelete} className="text-red-400 hover:text-red-600 transition-all active:scale-95"><Trash2 size={14}/></button>}</td>}
+                                        </tr>
+                                    );
+                                } else {
+                                    return (
+                                        <tr key={`${i}-main`} className="hover:opacity-80 transition-all">
+                                            <td className={`px-2 py-2.5 text-center bg-emerald-50/70 rounded-l-md ${r._isCustom?'border-l-2 border-emerald-400':''}`}>{renderDateIfApplicable('日期',r[Object.keys(r).find(k=>k.includes('日期'))||'日期'])} {r._isCustom && <span className="ml-1 text-[10px] bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded font-bold">手</span>}</td>
+                                            <td className="text-right px-2 font-bold bg-emerald-50/70 text-emerald-900">{amount.toLocaleString()}</td>
+                                            <td className="px-2 bg-orange-50/70"><input type="text" disabled={!isAdmin} className="border-none bg-transparent w-full text-xs text-center focus:ring-0 text-orange-900 placeholder-orange-300" value={cD['發票日期'] !== undefined ? cD['發票日期'] : renderDateIfApplicable('發票日期', r['發票日期']) || ''} onChange={e=>handleInvoiceChange(rK,'發票日期',e.target.value)} placeholder="日期"/></td>
+                                            <td className="px-2 bg-orange-50/70 rounded-r-md py-1">
+                                                <div className="flex flex-col items-center justify-center">
+                                                    <input type="text" disabled={!isAdmin} className="border-none bg-transparent w-full text-xs text-center focus:ring-0 font-mono text-orange-900 placeholder-orange-300 p-0 mb-1" value={cD['發票號碼'] || r['發票號碼'] || ''} onChange={e=>handleInvoiceChange(rK,'發票號碼',e.target.value)} placeholder="號碼"/>
+                                                    {isAdmin && !( (cD['發票日期'] !== undefined ? cD['發票日期'] : renderDateIfApplicable('發票日期', r['發票日期'])) && (cD['發票號碼'] || r['發票號碼']) ) && selectedUnit.基本資料?.預開發票清單?.length > 0 && (
+                                                        <div className="flex flex-wrap gap-1 justify-center">
+                                                            {selectedUnit.基本資料.預開發票清單.map(inv => {
+                                                                if(!inv.號碼) return null;
+                                                                return (
+                                                                    <button 
+                                                                        key={inv.id} 
+                                                                        onClick={() => handleInvoiceApplyPreOpen(rK, inv.日期, inv.號碼)}
+                                                                        title={`帶入預開: ${inv.日期}-${inv.號碼}`}
+                                                                        className={`text-[9px] px-1.5 py-0.5 rounded shadow-sm transition-transform active:scale-90 font-medium ${inv.土地款 ? 'bg-amber-100 text-amber-700 border border-amber-200 hover:bg-amber-200' : 'bg-sky-100 text-sky-700 border border-sky-200 hover:bg-sky-200'}`}
+                                                                    >
+                                                                        帶入{inv.土地款 ? '(土)' : ''}
+                                                                    </button>
+                                                                );
+                                                            })}
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            </td>
+                                            {isAdmin && <td className="text-center">{hasDeleteBtn && <button onClick={handleDelete} className="text-red-400 hover:text-red-600 transition-all active:scale-95"><Trash2 size={14}/></button>}</td>}
+                                        </tr>
+                                    );
+                                }
+                            };
+                            return ( <React.Fragment key={i}> {renderTr(splitPrepay, true)} {renderTr(amt, false)} </React.Fragment> );
+                        });
+                      })()}
+                      {isAdmin && (
+                        <tr className="bg-blue-50/40 rounded-xl">
+                            <td className="p-2 rounded-l-md"><input type="text" placeholder="115/05/04" className="border border-white/60 rounded text-xs w-full p-1.5 text-center bg-white/60 focus:bg-white" value={remitInput.date} onChange={e=>setRemitInput({...remitInput, date: e.target.value})}/></td>
+                            <td className="p-2"><input type="number" placeholder="金額" className="border border-white/60 rounded text-xs w-full p-1.5 text-right bg-white/60 focus:bg-white" value={remitInput.amt} onChange={e=>setRemitInput({...remitInput, amt: e.target.value})}/></td>
+                            <td colSpan="2" className="p-2 text-right rounded-r-md"><button onClick={async () => {
+                                if(remitInput.amt){
+                                    const rec = { unitKey:`${selectedUnit.基本資料.樓層}_${selectedUnit.基本資料.編號}`, 匯款日期:convertToMinguo(remitInput.date), 匯款金額:Number(remitInput.amt), _isCustom:true, id:Date.now().toString() };
+                                    const newR = [...(customData.remittances || []), rec];
+                                    await setDoc(doc(db,'artifacts',appId,'public', 'data','custom','additions'), { remittances:newR }, { merge:true });
+                                    const updatedList = [...selectedUnit.匯款紀錄, {...rec, _id: rec.id, _isCustom: true}];
+                                    updatedList.sort((a, b) => getRecordDateWeight(a) - getRecordDateWeight(b));
+                                    setSelectedUnit({...selectedUnit, 匯款紀錄: updatedList});
+                                    setRemitInput({ date: '', amt: '' });
+                                }
+                            }} className="bg-blue-600 text-white px-4 py-2 rounded-lg text-xs font-bold shadow-sm hover:bg-blue-700 transition-all active:scale-95">新增實收匯款</button></td>
+                        </tr>
+                      )}
+                    </tbody></table>
+                  </div>
+
+                  <div className="bg-white p-5 rounded-2xl border border-purple-100 shadow-sm">
+                    <h3 className="text-sm font-bold text-purple-600 mb-4 border-b pb-2 flex items-center gap-2"><Hammer size={16}/>客變費用管理 (應收帳項)</h3>
+                    <table className="w-full text-xs border-separate border-spacing-y-1.5">
+                      <thead>
+                        <tr className="bg-purple-50 text-purple-400 font-bold"><th className="text-center py-2">日期</th><th className="text-center px-2">變更項目</th><th className="text-right px-2">費用金額</th><th className="text-center px-2">發票號碼</th>{isAdmin && <th className="text-center w-16">管理</th>}</tr>
+                      </thead>
+                      <tbody>
+                      {(selectedUnit.客變紀錄 || []).map((r,i) => {
+                        const rK = r.id; const cD = firebaseInvoices[rK] || {};
+                        return (
+                        <tr key={i} className="hover:bg-purple-50/30 rounded-lg transition-all">
+                          <td className="px-2 py-2.5 text-center">{r.日期}</td>
+                          <td className="px-2 py-2.5 text-center font-medium">{r.備註 || '-'}</td>
+                          <td className="text-right px-2 font-bold text-purple-700 whitespace-pre-wrap">{Number(r.客變金額).toLocaleString()}</td>
+                          <td className="px-2 text-center"><input type="text" disabled={!isAdmin} className="border-none bg-transparent w-full text-xs text-center focus:ring-0 font-mono text-purple-900 placeholder-purple-300" value={cD['發票號碼'] || r['發票號碼'] || ''} onChange={e=>handleInvoiceChange(rK,'發票號碼',e.target.value)} placeholder="號碼"/></td>
+                          {isAdmin && ( <td className="text-center"><button onClick={async ()=>{if(!confirm("刪除客變項目？"))return;const uC=(customData.customChanges || []).filter(x=>x.id!==r.id);await setDoc(doc(db,'artifacts',appId,'public', 'data','custom','additions'), { customChanges: uC }, { merge:true });setSelectedUnit({...selectedUnit, 客變紀錄: uC.filter(x=>x.unitKey === `${selectedUnit.基本資料.樓層}_${selectedUnit.基本資料.編號}`)} );}} className="text-red-400 hover:text-red-600 active:scale-95 transition-all"><Trash2 size={14}/></button></td> )}
+                        </tr>
+                        );
+                      })}
+                      {isAdmin && (
+                        <tr className="bg-purple-50/60 rounded-xl">
+                            <td className="p-2"><input type="text" placeholder="115/05/04" className="border rounded text-xs w-full p-1.5 text-center bg-white/60 focus:bg-white" value={cbInput.date} onChange={e=>setCbInput({...cbInput, date: e.target.value})}/></td>
+                            <td className="p-2"><input placeholder="項目內容" className="border rounded text-xs w-full p-1.5 text-center bg-white/60 focus:bg-white" value={cbInput.note} onChange={e=>setCbInput({...cbInput, note: e.target.value})}/></td>
+                            <td className="p-2"><input type="number" placeholder="費用" className="border rounded text-xs w-full p-1.5 text-right bg-white/60 focus:bg-white" value={cbInput.amt} onChange={e=>setCbInput({...cbInput, amt: e.target.value})}/></td>
+                            <td colSpan="2" className="p-2 text-right"><button onClick={async () => {
+                                if(cbInput.amt){
+                                    const rec = { unitKey:`${selectedUnit.基本資料.樓層}_${selectedUnit.基本資料.編號}`, 日期:convertToMinguo(cbInput.date), 備註:cbInput.note, 客變金額:Number(cbInput.amt), id:Date.now().toString() };
+                                    const newC = [...(customData.customChanges || []), rec];
+                                    await setDoc(doc(db,'artifacts',appId,'public', 'data','custom','additions'), { customChanges:newC }, { merge:true });
+                                    setSelectedUnit({...selectedUnit, 客變紀錄: [...selectedUnit.客變紀錄, rec]});
+                                    setCbInput({ date: '', note: '', amt: '' });
+                                }
+                            }} className="bg-purple-600 text-white px-4 py-2 rounded-lg text-xs font-bold shadow-sm hover:bg-purple-700 transition-all active:scale-95">新增</button></td>
+                        </tr>
+                      )}
+                    </tbody></table>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+          {showAuthModal && isAdmin && (
+            <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+              <div className="bg-white p-8 rounded-3xl w-full max-w-2xl shadow-2xl flex flex-col max-h-[90vh]">
+                <div className="flex justify-between items-center border-b pb-4 mb-4"><h3 className="font-bold text-lg text-[#8C9B90] flex items-center gap-2"><ShieldAlert size={20}/>授權名單管理</h3><button onClick={() => setShowAuthModal(false)} className="text-gray-400 hover:bg-gray-100 p-2 rounded-full transition-all"><X size={20}/></button></div>
+                <div className="overflow-y-auto scrollbar-hide flex-1">
+                    <div className="flex gap-2 mb-6"><input id="new_auth_name" type="text" placeholder="人員名稱" className="border w-1/3 p-2.5 rounded-xl text-sm" /><input id="new_auth_email" type="email" placeholder="Email" className="border flex-1 p-2.5 rounded-xl text-sm" /><button onClick={async () => {
+                        const n = document.getElementById('new_auth_name').value.trim(), e = document.getElementById('new_auth_email').value.trim().toLowerCase();
+                        if(e && e.includes('@')) { const newList = [...(customData.allowedViewers || []), { name: n, email: e }]; await setDoc(doc(db,'artifacts',appId,'public', 'data','custom','additions'), {allowedViewers: newList}, {merge:true}); }
+                      }} className="bg-[#8C9B90] text-white px-5 py-2.5 rounded-xl text-sm font-bold shadow-md">加入</button>
+                    </div>
+                </div>
+              </div>
+            </div>
+          )}
+          {showAddUnitModal && isAdmin && <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm"><div className="bg-white p-8 rounded-3xl w-96 shadow-2xl"><h3 className="font-bold mb-6 text-lg text-[#8C9B90] border-b pb-2 flex items-center gap-2"><Plus size={20}/>建立新成交戶</h3><div className="space-y-4"><input id="new_u_f" className="border w-full p-3 rounded-xl outline-none" placeholder="樓層" /><input id="new_u_u" className="border w-full p-3 rounded-xl outline-none" placeholder="編號" /></div><div className="flex justify-end gap-3 mt-8"><button onClick={() => setShowAddUnitModal(false)} className="px-5 py-2.5 text-gray-400 text-sm">取消</button><button onClick={async () => {
+            const f=document.getElementById('new_u_f').value, u=document.getElementById('new_u_u').value;
+            if(f&&u){ const k=`${normStr(f)}_${normStr(u)}`; const cu={...(customData.units || {}), [k]:{ 基本資料:{ 樓層:normStr(f), 編號:normStr(u), 買方: "新客戶" }}}; await setDoc(doc(db,'artifacts',appId,'public', 'data','custom','additions'), {units:cu}, {merge:true}); setShowAddUnitModal(false); }
+          }} className="bg-[#8C9B90] text-white px-8 py-2.5 rounded-xl text-sm font-bold">確認建立</button></div></div></div>}
+        </div>
+      );
+    }
+    const root = createRoot(document.getElementById('root')); root.render(<App />);
+  </script>
+</body>
+</html>
