@@ -191,6 +191,7 @@
       const [isEditingMode, setIsEditingMode] = useState(false);
       const [showAddUnitModal, setShowAddUnitModal] = useState(false);
       const [showAuthModal, setShowAuthModal] = useState(false);
+      const [showBackupModal, setShowBackupModal] = useState(false);
       const [showUnpaidDetails, setShowUnpaidDetails] = useState(false);
       const [expandedStage, setExpandedStage] = useState(null);
       const [copyStatus, setCopyStatus] = useState(null);
@@ -382,6 +383,73 @@
       }, []);
 
       const handleGoogleLogin = async () => { try { await signInWithPopup(auth, provider); } catch (e) { console.error(e); } };
+
+      const handleBackupData = () => {
+        const backupData = {
+          timestamp: new Date().toISOString(),
+          version: 1,
+          data: {
+            master_sheets: sheetsData,
+            invoices: firebaseInvoices,
+            customData: customData,
+            archivedRemittances: archivedRemittances
+          }
+        };
+        const blob = new Blob([JSON.stringify(backupData, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `青森苑系統備份_${new Date().toISOString().slice(0,10).replace(/-/g,'')}.json`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      };
+
+      const handleRestoreData = async (e) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        if (!window.confirm('警告：還原將會完全覆蓋目前雲端上的資料，是否確定繼續？')) {
+           e.target.value = '';
+           return;
+        }
+        const reader = new FileReader();
+        reader.onload = async (event) => {
+          try {
+            const backup = JSON.parse(event.target.result);
+            if (!backup || !backup.data) throw new Error("無效的備份檔案格式");
+            
+            setCloudStatus("syncing");
+            
+            if (backup.data.invoices) {
+              await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'invoices', 'all_invoices'), backup.data.invoices);
+            }
+            if (backup.data.customData) {
+              await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'custom', 'additions'), backup.data.customData);
+            }
+            if (backup.data.archivedRemittances) {
+              await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'custom', 'archived'), { remittances: backup.data.archivedRemittances });
+            }
+            if (backup.data.master_sheets) {
+              const colRef = collection(db, 'artifacts', appId, 'public', 'data', 'master_sheets');
+              const oldDocs = await getDocs(colRef);
+              for (const d of oldDocs.docs) {
+                 await deleteDoc(d.ref);
+              }
+              for (const sheetName of Object.keys(backup.data.master_sheets)) {
+                 await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'master_sheets', sheetName.replace(/\//g, '_')), { rows: backup.data.master_sheets[sheetName] });
+              }
+            }
+            alert("資料還原成功！");
+            setShowBackupModal(false);
+          } catch (err) {
+            console.error(err);
+            alert("還原失敗：" + err.message);
+          }
+        };
+        reader.readAsText(file);
+        e.target.value = '';
+      };
 
       const handleFileUpload = (e) => {
         if (!isAdmin) return;
@@ -965,6 +1033,7 @@
                           </div>
                       )}
                   </div>
+                  <button onClick={() => setShowBackupModal(true)} className="bg-white border border-indigo-500 text-indigo-500 px-3 py-1.5 rounded-full text-[11px] font-bold hover:bg-indigo-500 hover:text-white flex items-center gap-1 shadow-sm transition-all"><Database size={12} />備份還原</button>
                   <button onClick={() => setShowAuthModal(true)} className="bg-white border border-[#8C9B90] text-[#8C9B90] px-3 py-1.5 rounded-full text-[11px] font-bold hover:bg-[#8C9B90] hover:text-white flex items-center gap-1 shadow-sm transition-all"><ShieldAlert size={12} />權限管理</button>
                   <button onClick={() => setShowAddUnitModal(true)} className="bg-white border border-[#8C9B90] text-[#8C9B90] px-3 py-1.5 rounded-full text-[11px] font-bold hover:bg-[#8C9B90] hover:text-white flex items-center gap-1 shadow-sm transition-all"><Plus size={12} />雲端新增</button>
                   <label className="cursor-pointer bg-[#8C9B90] text-white px-3 py-1.5 rounded-full text-[11px] font-bold flex items-center gap-1 shadow-sm hover:bg-[#7A8A7E] transition-all"><Upload size={12} /> 匯入 Excel<input type="file" accept=".xlsx, .xls, .csv" className="hidden" onChange={handleFileUpload} /></label>
@@ -1092,8 +1161,8 @@
                           const span = rowSpans[unitKey] || 1; const isTransfer = transferUnitKeys.has(unitKey);
                           const isHandoverComplete = activeTab.includes('收款總表') && allUnitsPaymentStatus[unitKey] && Object.keys(allUnitsPaymentStatus[unitKey]).length > 0 && Object.values(allUnitsPaymentStatus[unitKey]).every(st => st.exp === 0 || st.unpaid <= 0) && !!(customData?.units?.[unitKey]?.基本資料?.交屋日期?.trim());
                           return (
-                            <tr key={idx} className={`transition-colors ${isHandoverComplete ? 'bg-emerald-50 hover:bg-emerald-100' : 'hover:bg-gray-50/50'}`}>
-                              {isF && <td rowSpan={span} className={`px-1 py-2 border-r text-center sticky left-0 z-30 sticky-shadow align-middle ${isHandoverComplete ? 'bg-emerald-50' : 'bg-white'}`}><button onClick={() => openUnitDetails(uInfo.f, uInfo.u, uInfo.b)} className="text-[9px] bg-[#D4C9B9] text-white px-2 py-1 rounded-md shadow-sm hover:bg-[#8C9B90]">檢視</button></td>}
+                            <tr key={idx} className={`transition-colors ${isHandoverComplete ? 'bg-gray-200 hover:bg-gray-300' : 'hover:bg-gray-50/50'}`}>
+                              {isF && <td rowSpan={span} className={`px-1 py-2 border-r text-center sticky left-0 z-30 sticky-shadow align-middle ${isHandoverComplete ? 'bg-gray-200' : 'bg-white'}`}><button onClick={() => openUnitDetails(uInfo.f, uInfo.u, uInfo.b)} className="text-[9px] bg-[#D4C9B9] text-white px-2 py-1 rounded-md shadow-sm hover:bg-[#8C9B90]">檢視</button></td>}
                               {currentColumns.map((col, i) => {
                                   const isSticky = ['樓層', '編號', '買方', '成交總價'].includes(col);
                                   const leftPos = col==='樓層'?'44px':col==='編號'?'89px':col==='買方'?'134px':col==='成交總價'?'244px':'0px';
@@ -1104,7 +1173,7 @@
                                   const stageKey = getStageKeyForColumn(col); let isUnpaidStage = false;
                                   if (stageKey && allUnitsPaymentStatus[unitKey]) { const status = allUnitsPaymentStatus[unitKey][stageKey]; if (status && status.exp > 0 && status.unpaid > 0) isUnpaidStage = true; }
                                   return (
-                                    <td key={i} rowSpan={isSticky?span:1} className={`px-2 py-2 border-r ${colClass} ${getAlignClass(col, row[col])} ${isSticky ? `sticky z-20 align-middle ${isHandoverComplete ? 'bg-emerald-50' : 'bg-white'}` : ''} ${col==='買方'?'font-bold text-[#8C9B90]':''} ${isUnpaidStage ? 'bg-red-50 text-red-600 font-medium' : ''} whitespace-pre-wrap`} style={isSticky?{left:leftPos}:{}}>
+                                    <td key={i} rowSpan={isSticky?span:1} className={`px-2 py-2 border-r ${colClass} ${getAlignClass(col, row[col])} ${isSticky ? `sticky z-20 align-middle ${isHandoverComplete ? 'bg-gray-200' : 'bg-white'}` : ''} ${col==='買方'?'font-bold text-[#8C9B90]':''} ${isUnpaidStage ? 'bg-red-50 text-red-600 font-medium' : ''} whitespace-pre-wrap`} style={isSticky?{left:leftPos}:{}}>
                                       {displayVal}
                                       {col === '買方' && isTransfer && <span className="ml-1 px-1 bg-orange-100 text-orange-600 text-[9px] font-bold rounded">換</span>}
                                     </td>
@@ -1598,6 +1667,38 @@
             const f=document.getElementById('new_u_f').value, u=document.getElementById('new_u_u').value;
             if(f&&u){ const k=`${normStr(f)}_${normStr(u)}`; const cu={...(customData.units || {}), [k]:{ 基本資料:{ 樓層:normStr(f), 編號:normStr(u), 買方: "新客戶" }}}; await setDoc(doc(db,'artifacts',appId,'public', 'data','custom','additions'), {units:cu}, {merge:true}); setShowAddUnitModal(false); }
           }} className="bg-[#8C9B90] text-white px-8 py-2.5 rounded-xl text-sm font-bold">確認建立</button></div></div></div>}
+          {showBackupModal && isAdmin && (
+            <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+              <div className="bg-white p-8 rounded-3xl w-full max-w-md shadow-2xl flex flex-col">
+                <div className="flex justify-between items-center border-b pb-4 mb-6">
+                  <h3 className="font-bold text-lg text-indigo-600 flex items-center gap-2"><Database size={20}/>備份與還原</h3>
+                  <button onClick={() => setShowBackupModal(false)} className="text-gray-400 hover:bg-gray-100 p-2 rounded-full transition-all"><X size={20}/></button>
+                </div>
+                <div className="space-y-6">
+                  <div className="bg-indigo-50 p-4 rounded-xl border border-indigo-100 flex flex-col gap-3">
+                    <div>
+                      <h4 className="text-sm font-bold text-indigo-800">匯出備份 (Backup)</h4>
+                      <p className="text-xs text-indigo-600 mt-1">將目前雲端上所有的設定、發票紀錄、客戶資料打包下載為 JSON 檔案，建議定期備份以防萬一。</p>
+                    </div>
+                    <button onClick={handleBackupData} className="w-full bg-indigo-600 text-white px-4 py-2.5 rounded-lg text-sm font-bold shadow-md hover:bg-indigo-700 transition-colors flex items-center justify-center gap-2">
+                      <Download size={16} /> 下載備份檔
+                    </button>
+                  </div>
+                  
+                  <div className="bg-red-50 p-4 rounded-xl border border-red-100 flex flex-col gap-3">
+                    <div>
+                      <h4 className="text-sm font-bold text-red-800">資料還原 (Restore)</h4>
+                      <p className="text-xs text-red-600 mt-1">上傳先前的備份檔 (JSON)。<strong className="font-black text-red-700">警告：此操作將完全覆蓋目前的雲端資料且無法復原！</strong></p>
+                    </div>
+                    <label className="w-full cursor-pointer bg-white border-2 border-red-200 text-red-600 px-4 py-2.5 rounded-lg text-sm font-bold hover:bg-red-50 transition-colors flex items-center justify-center gap-2">
+                      <Upload size={16} /> 選擇備份檔還原
+                      <input type="file" accept=".json" className="hidden" onChange={handleRestoreData} />
+                    </label>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       );
     }
