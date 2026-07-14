@@ -57,7 +57,7 @@
   <script type="text/babel" data-type="module">
     import React, { useState, useEffect, useMemo, useRef } from 'react';
     import { createRoot } from 'react-dom/client';
-    import { Upload, Search, X, Home, User, Phone, MapPin, FileText, DollarSign, Layers, Cloud, RefreshCw, Plus, LogIn, LogOut, AlertCircle, Trash2, Database, ShieldAlert, ChevronUp, ChevronDown, TrendingUp, CreditCard, Clock, Hammer, PieChart, Save, Lock, Download, CheckSquare, Info, Users, Copy, Check, ClipboardList } from 'lucide-react';
+    import { Upload, Search, X, Home, User, Phone, MapPin, FileText, DollarSign, Layers, Cloud, RefreshCw, Plus, LogIn, LogOut, AlertCircle, Trash2, Database, ShieldAlert, ChevronUp, ChevronDown, TrendingUp, CreditCard, Clock, Hammer, PieChart, Save, Lock, Download, CheckSquare, Info, Users, Copy, Check, ClipboardList, CheckCircle2 } from 'lucide-react';
     import { initializeApp } from 'firebase/app';
     import { getAuth, onAuthStateChanged, signInWithCustomToken, GoogleAuthProvider, signInWithPopup, signOut } from 'firebase/auth';
     import { getFirestore, doc, setDoc, getDoc, collection, onSnapshot, deleteDoc, getDocs, updateDoc, arrayUnion } from 'firebase/firestore';
@@ -538,6 +538,7 @@
           if(cu.基本資料?.優先預收 !== undefined) info.基本資料.優先預收 = cu.基本資料.優先預收;
           if(cu.基本資料?.尾款發票號碼 !== undefined) info.基本資料.尾款發票號碼 = cu.基本資料.尾款發票號碼;
           if(cu.基本資料?.尾款發票日期 !== undefined) info.基本資料.尾款發票日期 = cu.基本資料.尾款發票日期;
+          if(cu.基本資料?.交屋日期 !== undefined) info.基本資料.交屋日期 = cu.基本資料.交屋日期;
           
           if(cu.基本資料?.預開發票清單 !== undefined) {
               info.基本資料.預開發票清單 = cu.基本資料.預開發票清單;
@@ -1089,9 +1090,10 @@
                           const uInfo = parseUnitInfo(row); const unitKey = `${uInfo.f}_${uInfo.u}`;
                           const isM = rowSpans[unitKey] > 1; const isF = !isM || idx === 0 || `${normStr(combinedData[idx-1]['樓層'])}_${normStr(combinedData[idx-1]['編號'])}` !== unitKey;
                           const span = rowSpans[unitKey] || 1; const isTransfer = transferUnitKeys.has(unitKey);
+                          const isHandoverComplete = activeTab.includes('收款總表') && allUnitsPaymentStatus[unitKey] && Object.keys(allUnitsPaymentStatus[unitKey]).length > 0 && Object.values(allUnitsPaymentStatus[unitKey]).every(st => st.exp === 0 || st.unpaid <= 0) && !!(customData?.units?.[unitKey]?.基本資料?.交屋日期?.trim());
                           return (
-                            <tr key={idx} className="hover:bg-gray-50/50 transition-colors">
-                              {isF && <td rowSpan={span} className="px-1 py-2 border-r text-center sticky left-0 bg-white z-30 sticky-shadow align-middle"><button onClick={() => openUnitDetails(uInfo.f, uInfo.u, uInfo.b)} className="text-[9px] bg-[#D4C9B9] text-white px-2 py-1 rounded-md shadow-sm hover:bg-[#8C9B90]">檢視</button></td>}
+                            <tr key={idx} className={`transition-colors ${isHandoverComplete ? 'bg-emerald-50 hover:bg-emerald-100' : 'hover:bg-gray-50/50'}`}>
+                              {isF && <td rowSpan={span} className={`px-1 py-2 border-r text-center sticky left-0 z-30 sticky-shadow align-middle ${isHandoverComplete ? 'bg-emerald-50' : 'bg-white'}`}><button onClick={() => openUnitDetails(uInfo.f, uInfo.u, uInfo.b)} className="text-[9px] bg-[#D4C9B9] text-white px-2 py-1 rounded-md shadow-sm hover:bg-[#8C9B90]">檢視</button></td>}
                               {currentColumns.map((col, i) => {
                                   const isSticky = ['樓層', '編號', '買方', '成交總價'].includes(col);
                                   const leftPos = col==='樓層'?'44px':col==='編號'?'89px':col==='買方'?'134px':col==='成交總價'?'244px':'0px';
@@ -1102,7 +1104,7 @@
                                   const stageKey = getStageKeyForColumn(col); let isUnpaidStage = false;
                                   if (stageKey && allUnitsPaymentStatus[unitKey]) { const status = allUnitsPaymentStatus[unitKey][stageKey]; if (status && status.exp > 0 && status.unpaid > 0) isUnpaidStage = true; }
                                   return (
-                                    <td key={i} rowSpan={isSticky?span:1} className={`px-2 py-2 border-r ${colClass} ${getAlignClass(col, row[col])} ${isSticky ? 'sticky z-20 bg-white align-middle' : ''} ${col==='買方'?'font-bold text-[#8C9B90]':''} ${isUnpaidStage ? 'bg-red-50 text-red-600 font-medium' : ''} whitespace-pre-wrap`} style={isSticky?{left:leftPos}:{}}>
+                                    <td key={i} rowSpan={isSticky?span:1} className={`px-2 py-2 border-r ${colClass} ${getAlignClass(col, row[col])} ${isSticky ? `sticky z-20 align-middle ${isHandoverComplete ? 'bg-emerald-50' : 'bg-white'}` : ''} ${col==='買方'?'font-bold text-[#8C9B90]':''} ${isUnpaidStage ? 'bg-red-50 text-red-600 font-medium' : ''} whitespace-pre-wrap`} style={isSticky?{left:leftPos}:{}}>
                                       {displayVal}
                                       {col === '買方' && isTransfer && <span className="ml-1 px-1 bg-orange-100 text-orange-600 text-[9px] font-bold rounded">換</span>}
                                     </td>
@@ -1141,6 +1143,15 @@
                       <h2 className="text-xl font-bold flex flex-wrap items-center gap-2">
                           {isEditingMode ? <input className="border px-2 py-1 rounded w-28 text-base" value={selectedUnit.基本資料.買方} onChange={e=>setSelectedUnit({...selectedUnit, 基本資料:{...selectedUnit.基本資料, 買方:e.target.value}})}/> : (selectedUnit.基本資料.買方||'未填寫')}
                           {!isEditingMode && selectedUnit.基本資料.車位 && <span className="text-sm font-normal text-blue-600 bg-blue-50 px-2.5 py-0.5 rounded-md border border-blue-200 ml-1">車位: {normStr(selectedUnit.基本資料.車位)}</span>}
+                          {isEditingMode ? (
+                            <input className="border px-2 py-1 rounded w-32 text-base text-gray-600" placeholder="交屋日期" value={selectedUnit.基本資料.交屋日期 || ''} onChange={e=>setSelectedUnit({...selectedUnit, 基本資料:{...selectedUnit.基本資料, 交屋日期:e.target.value}})} />
+                          ) : (
+                            selectedUnit.基本資料.交屋日期 && (
+                              <span className="text-sm font-normal text-emerald-700 bg-emerald-50 px-2.5 py-0.5 rounded-md border border-emerald-200 ml-1 flex items-center gap-1">
+                                <CheckCircle2 size={14} className="text-emerald-500" /> 交屋: {selectedUnit.基本資料.交屋日期}
+                              </span>
+                            )
+                          )}
                           {!isEditingMode && selectedUnit.基本資料.預收款 && (
                             <label className={`text-sm font-normal px-2.5 py-0.5 rounded-md border flex items-center gap-1.5 cursor-pointer transition-all ${selectedUnit.基本資料.優先預收 ? 'text-purple-700 bg-purple-50 border-purple-200 shadow-sm' : 'text-amber-600 bg-amber-50 border-amber-200'}`} title="打勾後，當累計金額達使照款且足夠付清預收時，系統將優先從最新一筆匯款中自動扣抵">
                               <input 
