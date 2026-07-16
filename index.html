@@ -990,6 +990,11 @@
                   if (tk) {
                       row[tk] = totalHouse + totalLand;
                   }
+                  const pt = Object.keys(row).find(x => x === '成交價');
+                  if (pt) {
+                      if (row === house) row[pt] = totalHouse;
+                      else if (row === land) row[pt] = totalLand;
+                  }
              });
           });
           
