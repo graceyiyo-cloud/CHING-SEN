@@ -561,36 +561,72 @@
       };
       const projectStats = useMemo(() => {
         let totalSales = 0, totalReceived = 0, soldCount = 0, totalUnitsCount = 0;
-        const seenUnits = new Set();
         const salesTabKey = Object.keys(sheetsData).find(k => k.includes('收款總表'));
         if (salesTabKey) {
           const rows = sheetsData[salesTabKey] || [];
+          const unitRows = {};
           rows.forEach(row => {
             const f = normStr(row['樓層']), u = normStr(row['編號']);
-            if (f && u && !f.includes('合計')) { 
-              const key = `${f}_${u}`;
-              if (!seenUnits.has(key)) {
-                seenUnits.add(key); totalUnitsCount++;
-                
-                let house = row, land = {};
-                if (customData?.units?.[key]) {
-                   if (customData.units[key].house) house = { ...house, ...customData.units[key].house };
-                   if (customData.units[key].land) land = { ...land, ...customData.units[key].land };
-                }
-                
-                let price = 0;
-                PAYMENT_STAGES.forEach(s => {
-                    if (s.k === '客變') return;
-                    const hk = Object.keys(house).find(x=>x.includes(s.k) && !x.includes('總價'));
-                    const lk = Object.keys(land).find(x=>x.includes(s.k) && !x.includes('總價'));
-                    price += (hk ? (parseFloat(String(house[hk]).replace(/,/g,''))||0) : 0);
-                    price += (lk ? (parseFloat(String(land[lk]).replace(/,/g,''))||0) : 0);
-                });
-
-                if (price > 0) { totalSales += price; soldCount++; }
-              }
+            if (f && u && !f.includes('合計')) {
+               const key = `${f}_${u}`;
+               if (!unitRows[key]) unitRows[key] = [];
+               unitRows[key].push(row);
             }
           });
+
+          Object.keys(unitRows).forEach(key => {
+             totalUnitsCount++;
+             const uRows = unitRows[key];
+             let house = {}, land = {};
+             
+             uRows.forEach(row => {
+                 const isHouse = Object.values(row).some(v => String(v).includes('房屋'));
+                 const isLand = Object.values(row).some(v => String(v).includes('土地'));
+                 if (isHouse) house = row;
+                 if (isLand) land = row;
+             });
+             
+             if (Object.keys(house).length === 0 && uRows.length > 0) house = uRows[0];
+
+             if (customData?.units?.[key]) {
+                if (customData.units[key].house) house = { ...house, ...customData.units[key].house };
+                if (customData.units[key].land) land = { ...land, ...customData.units[key].land };
+             }
+             
+             let price = 0;
+             PAYMENT_STAGES.forEach(s => {
+                  if (s.k === '客變') return;
+                  if (Object.keys(house).length > 0) {
+                      const hk = Object.keys(house).find(x=>x.includes(s.k) && !x.includes('總價'));
+                      price += (hk ? (parseFloat(String(house[hk]).replace(/,/g,''))||0) : 0);
+                  }
+                  if (Object.keys(land).length > 0) {
+                      const lk = Object.keys(land).find(x=>x.includes(s.k) && !x.includes('總價'));
+                      price += (lk ? (parseFloat(String(land[lk]).replace(/,/g,''))||0) : 0);
+                  }
+             });
+
+             if (price > 0) { totalSales += price; soldCount++; }
+          });
+          
+          if (customData?.units) {
+             Object.keys(customData.units).forEach(key => {
+                 if (!unitRows[key]) {
+                     totalUnitsCount++;
+                     let house = customData.units[key].house || {};
+                     let land = customData.units[key].land || {};
+                     let price = 0;
+                     PAYMENT_STAGES.forEach(s => {
+                          if (s.k === '客變') return;
+                          const hk = Object.keys(house).find(x=>x.includes(s.k) && !x.includes('總價'));
+                          price += (hk ? (parseFloat(String(house[hk]).replace(/,/g,''))||0) : 0);
+                          const lk = Object.keys(land).find(x=>x.includes(s.k) && !x.includes('總價'));
+                          price += (lk ? (parseFloat(String(land[lk]).replace(/,/g,''))||0) : 0);
+                     });
+                     if (price > 0) { totalSales += price; soldCount++; }
+                 }
+             });
+          }
         }
         
         Object.keys(sheetsData).forEach(name => {
