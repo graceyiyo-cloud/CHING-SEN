@@ -1283,7 +1283,11 @@
                     <div className="flex flex-col gap-1">
                       <h2 className="text-xl font-bold flex flex-wrap items-center gap-2">
                           {isEditingMode ? <input className="border px-2 py-1 rounded w-28 text-base" value={selectedUnit.基本資料.買方} onChange={e=>setSelectedUnit({...selectedUnit, 基本資料:{...selectedUnit.基本資料, 買方:e.target.value}})}/> : (selectedUnit.基本資料.買方||'未填寫')}
-                          {!isEditingMode && selectedUnit.基本資料.車位 && <span className="text-sm font-normal text-blue-600 bg-blue-50 px-2.5 py-0.5 rounded-md border border-blue-200 ml-1">車位: {normStr(selectedUnit.基本資料.車位)}</span>}
+                          {isEditingMode ? (
+                            <input className="border px-2 py-1 rounded w-24 text-base text-blue-600" placeholder="車位號碼" value={selectedUnit.基本資料.車位 || ''} onChange={e=>setSelectedUnit({...selectedUnit, 基本資料:{...selectedUnit.基本資料, 車位:e.target.value}})} />
+                          ) : (
+                            selectedUnit.基本資料.車位 && <span className="text-sm font-normal text-blue-600 bg-blue-50 px-2.5 py-0.5 rounded-md border border-blue-200 ml-1">車位: {normStr(selectedUnit.基本資料.車位)}</span>
+                          )}
                           {isEditingMode ? (
                             <input className="border px-2 py-1 rounded w-32 text-base text-gray-600" placeholder="交屋日期" value={selectedUnit.基本資料.交屋日期 || ''} onChange={e=>setSelectedUnit({...selectedUnit, 基本資料:{...selectedUnit.基本資料, 交屋日期:e.target.value}})} />
                           ) : (
@@ -1387,7 +1391,7 @@
                             lA = kMatchL ? (parseFloat(String((selectedUnit.財務款項.land || {})[kMatchL]).replace(/,/g,''))||0) : 0; 
                             exp=hA+lA; 
                           }
-                          if (exp<=0 && st.k!=='成交') return null;
+                          if (exp<=0 && st.k!=='成交' && !isEditingMode) return null;
                           
                           let paid=0; if (st.k!=='成交') { if(rem>=exp) { paid=exp; rem-=exp; } else { paid=rem; rem=0; } }
                           if (st.k === '使照' && !canPrioritizePrepay) rem = Math.max(0, rem - prepay);
@@ -1395,8 +1399,36 @@
                           return (
                             <tr key={st.k} className={`${st.k==='成交'?'bg-gray-50':st.k==='客變'?'bg-purple-50':paid>=exp?'bg-green-50/70':paid>0?'bg-orange-50/70':'hover:bg-gray-50/30'} rounded-lg transition-all`}>
                                 <td className={`py-2.5 px-2 font-bold text-center ${st.k==='客變'?'text-purple-700':''}`}>{st.l}</td>
-                                <td className="text-right px-2 text-sky-700">{hA ? hA.toLocaleString() : (st.k==='客變' ? '-' : '')}</td>
-                                <td className="text-right px-2 text-amber-700">{lA ? lA.toLocaleString() : (st.k==='客變' ? '-' : '')}</td>
+                                <td className="text-right px-2 text-sky-700">
+                                  {st.k === '客變' ? '-' : isEditingMode ? (
+                                    <input className="w-20 text-right px-1 border rounded" value={hA || ''} onChange={e => {
+                                       const v = e.target.value.replace(/,/g,'');
+                                       const nKey = kMatchH || (st.k === '成交' ? '房屋款' : st.k + '房屋款');
+                                       setSelectedUnit({
+                                         ...selectedUnit,
+                                         財務款項: {
+                                           ...selectedUnit.財務款項,
+                                           house: { ...selectedUnit.財務款項.house, [nKey]: v }
+                                         }
+                                       });
+                                    }} />
+                                  ) : (hA ? hA.toLocaleString() : '')}
+                                </td>
+                                <td className="text-right px-2 text-amber-700">
+                                  {st.k === '客變' ? '-' : isEditingMode ? (
+                                    <input className="w-20 text-right px-1 border rounded" value={lA || ''} onChange={e => {
+                                       const v = e.target.value.replace(/,/g,'');
+                                       const nKey = kMatchL || (st.k === '成交' ? '土地款' : st.k + '土地款');
+                                       setSelectedUnit({
+                                         ...selectedUnit,
+                                         財務款項: {
+                                           ...selectedUnit.財務款項,
+                                           land: { ...selectedUnit.財務款項.land, [nKey]: v }
+                                         }
+                                       });
+                                    }} />
+                                  ) : (lA ? lA.toLocaleString() : '')}
+                                </td>
                                 <td className="text-right px-2 font-bold">{exp?exp.toLocaleString():''}</td>
                                 <td className="text-right px-2 text-green-600 font-bold">{st.k==='成交'?'':paid.toLocaleString()}</td>
                                 <td className="text-right px-2 text-red-500">{st.k==='成交'?'':(exp-paid).toLocaleString()}</td>
