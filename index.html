@@ -1384,9 +1384,21 @@
                         const displayStages = [ { k: '客變', l: '客變費用' }, { k: '成交', l: '合約總價' }, ...PAYMENT_STAGES.filter(st => st.k !== '客變') ];
                         return displayStages.map(st => {
                           let exp=0,hA=0,lA=0, kMatchH, kMatchL;
-                          if (st.k === '客變') exp=charges; else { 
-                            kMatchH = Object.keys(house).find(x=>x.includes(st.k) && (st.k==='成交'?!x.includes('總價'):true));
-                            kMatchL = Object.keys(selectedUnit.財務款項.land || {}).find(x=>x.includes(st.k) && (st.k==='成交'?!x.includes('總價'):true));
+                          if (st.k === '客變') exp=charges; else if (st.k === '成交') {
+                            hA = PAYMENT_STAGES.reduce((sum, s) => {
+                               if (s.k === '客變') return sum;
+                               const k = Object.keys(house).find(x=>x.includes(s.k) && !x.includes('總價'));
+                               return sum + (k ? (parseFloat(String(house[k]).replace(/,/g,''))||0) : 0);
+                            }, 0);
+                            lA = PAYMENT_STAGES.reduce((sum, s) => {
+                               if (s.k === '客變') return sum;
+                               const k = Object.keys(selectedUnit.財務款項.land || {}).find(x=>x.includes(s.k) && !x.includes('總價'));
+                               return sum + (k ? (parseFloat(String((selectedUnit.財務款項.land || {})[k]).replace(/,/g,''))||0) : 0);
+                            }, 0);
+                            exp = hA + lA;
+                          } else { 
+                            kMatchH = Object.keys(house).find(x=>x.includes(st.k) && !x.includes('總價'));
+                            kMatchL = Object.keys(selectedUnit.財務款項.land || {}).find(x=>x.includes(st.k) && !x.includes('總價'));
                             hA = kMatchH ? (parseFloat(String(house[kMatchH]).replace(/,/g,''))||0) : 0; 
                             lA = kMatchL ? (parseFloat(String((selectedUnit.財務款項.land || {})[kMatchL]).replace(/,/g,''))||0) : 0; 
                             exp=hA+lA; 
@@ -1400,10 +1412,10 @@
                             <tr key={st.k} className={`${st.k==='成交'?'bg-gray-50':st.k==='客變'?'bg-purple-50':paid>=exp?'bg-green-50/70':paid>0?'bg-orange-50/70':'hover:bg-gray-50/30'} rounded-lg transition-all`}>
                                 <td className={`py-2.5 px-2 font-bold text-center ${st.k==='客變'?'text-purple-700':''}`}>{st.l}</td>
                                 <td className="text-right px-2 text-sky-700">
-                                  {st.k === '客變' ? '-' : isEditingMode ? (
-                                    <input className="w-20 text-right px-1 border rounded" value={hA || ''} onChange={e => {
-                                       const v = e.target.value.replace(/,/g,'');
-                                       const nKey = kMatchH || (st.k === '成交' ? '房屋款' : st.k + '房屋款');
+                                  {st.k === '客變' ? '-' : (isEditingMode && st.k !== '成交') ? (
+                                    <input className="w-20 text-right px-1 border rounded" value={kMatchH && house[kMatchH] !== undefined ? house[kMatchH] : ''} onChange={e => {
+                                       const v = e.target.value;
+                                       const nKey = kMatchH || (st.k + '房屋款');
                                        setSelectedUnit({
                                          ...selectedUnit,
                                          財務款項: {
@@ -1415,10 +1427,10 @@
                                   ) : (hA ? hA.toLocaleString() : '')}
                                 </td>
                                 <td className="text-right px-2 text-amber-700">
-                                  {st.k === '客變' ? '-' : isEditingMode ? (
-                                    <input className="w-20 text-right px-1 border rounded" value={lA || ''} onChange={e => {
-                                       const v = e.target.value.replace(/,/g,'');
-                                       const nKey = kMatchL || (st.k === '成交' ? '土地款' : st.k + '土地款');
+                                  {st.k === '客變' ? '-' : (isEditingMode && st.k !== '成交') ? (
+                                    <input className="w-20 text-right px-1 border rounded" value={kMatchL && (selectedUnit.財務款項.land || {})[kMatchL] !== undefined ? (selectedUnit.財務款項.land || {})[kMatchL] : ''} onChange={e => {
+                                       const v = e.target.value;
+                                       const nKey = kMatchL || (st.k + '土地款');
                                        setSelectedUnit({
                                          ...selectedUnit,
                                          財務款項: {
