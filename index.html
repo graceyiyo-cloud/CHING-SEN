@@ -592,7 +592,6 @@
             }
           });
         }
-        (customData.customChanges || []).forEach(r => { totalSales += Math.max(0, Number(r.客變金額) || 0); });
         
         Object.keys(sheetsData).forEach(name => {
           if (name.includes('匯款') || name.includes('發票')) {
@@ -950,19 +949,10 @@
                   }
              });
              
-             let customChangesForUnit = 0;
-             if (customData?.customChanges) {
-                 customData.customChanges.forEach(c => {
-                     if (c.unitKey === key) {
-                         customChangesForUnit += Math.max(0, Number(c.客變金額) || 0);
-                     }
-                 });
-             }
-             
              rows.forEach(row => {
                   const tk = Object.keys(row).find(x => x === '成交總價');
                   if (tk) {
-                      row[tk] = totalHouse + totalLand + customChangesForUnit;
+                      row[tk] = totalHouse + totalLand;
                   }
              });
           });
