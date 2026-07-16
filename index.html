@@ -244,7 +244,7 @@
         const prepayAmount = parseFloat(String(selectedUnit.基本資料?.預收款).replace(/,/g, '')) || 0;
         const houseForExp = selectedUnit.財務款項?.house || {}; 
         const landForExp = selectedUnit.財務款項?.land || {};
-        const chargesForExp = (selectedUnit.客變紀錄 || []).reduce((s,r) => s + (Number(r.客變金額)||0), 0);
+        const chargesForExp = Math.max(0, (selectedUnit.客變紀錄 || []).reduce((s,r) => s + (Number(r.客變金額)||0), 0));
         
         let expBeforeShiZhao = chargesForExp;
         PAYMENT_STAGES.forEach(st => {
@@ -716,7 +716,7 @@
                 const details = getUnitFullDetails(uInfo.f, uInfo.u, uInfo.b);
                 const house = details.財務款項.house || {}; const land = details.財務款項.land || {};
                 const receipts = details.匯款紀錄.reduce((s,r) => s + (parseFloat(String(r[Object.keys(r).find(k=>k.includes('金額'))||'金額']).replace(/,/g,''))||0), 0);
-                const charges = (details.客變紀錄 || []).reduce((s,r) => s + (Number(r.客變金額)||0), 0);
+                const charges = Math.max(0, (details.客變紀錄 || []).reduce((s,r) => s + (Number(r.客變金額)||0), 0));
                 
                 let expBeforeShiZhao = charges;
                 PAYMENT_STAGES.forEach(st => {
@@ -787,7 +787,7 @@
                 const prepayAmount = parseFloat(String(details.基本資料.預收款).replace(/,/g, '')) || 0;
                 const houseForExp = details.財務款項.house || {}; 
                 const landForExp = details.財務款項.land || {};
-                const chargesForExp = (details.客變紀錄 || []).reduce((s,r) => s + (Number(r.客變金額)||0), 0);
+                const chargesForExp = Math.max(0, (details.客變紀錄 || []).reduce((s,r) => s + (Number(r.客變金額)||0), 0));
                 
                 let expBeforeShiZhao = chargesForExp;
                 PAYMENT_STAGES.forEach(st => {
@@ -985,7 +985,7 @@
             const details = getUnitFullDetails(u.f, u.u, u.b);
             const house = details.財務款項.house || {}; const land = details.財務款項.land || {};
             const receipts = details.匯款紀錄.reduce((s,r) => s + (parseFloat(String(r[Object.keys(r).find(k=>k.includes('金額'))||'金額']).replace(/,/g,''))||0), 0);
-            const charges = (details.客變紀錄 || []).reduce((s,r) => s + (Number(r.客變金額)||0), 0);
+            const charges = Math.max(0, (details.客變紀錄 || []).reduce((s,r) => s + (Number(r.客變金額)||0), 0));
             
             let expBeforeShiZhao = charges;
             PAYMENT_STAGES.forEach(st => {
@@ -1362,7 +1362,7 @@
                       {(() => {
                         const house = selectedUnit.財務款項.house || {}; const land = selectedUnit.財務款項.land || {};
                         const receipts = (selectedUnit.匯款紀錄 || []).reduce((s,r) => s + (parseFloat(String(r[Object.keys(r).find(k=>k.includes('金額'))||'金額']).replace(/,/g,''))||0), 0);
-                        const charges = (selectedUnit.客變紀錄 || []).reduce((s,r) => s + (Number(r.客變金額)||0), 0);
+                        const charges = Math.max(0, (selectedUnit.客變紀錄 || []).reduce((s,r) => s + (Number(r.客變金額)||0), 0));
                         let rem = receipts; const prepay = parseFloat(String(selectedUnit.基本資料.預收款).replace(/,/g, '')) || 0;
                         
                         let expBeforeShiZhao = charges;
@@ -1564,7 +1564,7 @@
                       {(() => {
                         const prepayAmount = parseFloat(String(selectedUnit.基本資料.預收款).replace(/,/g, '')) || 0;
                         const houseForExp = selectedUnit.財務款項.house || {}; const landForExp = selectedUnit.財務款項.land || {};
-                        const chargesForExp = (selectedUnit.客變紀錄 || []).reduce((s,r) => s + (Number(r.客變金額)||0), 0);
+                        const chargesForExp = Math.max(0, (selectedUnit.客變紀錄 || []).reduce((s,r) => s + (Number(r.客變金額)||0), 0));
                         
                         let expBeforeShiZhao = chargesForExp;
                         PAYMENT_STAGES.forEach(st => {
