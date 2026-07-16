@@ -1088,6 +1088,76 @@
         setIsEditingMode(false);
       };
 
+      const handleCancelContract = async () => {
+        if (!isAdmin || !selectedUnit) return;
+        const confirmMsg = `確定要解約戶別 ${selectedUnit.基本資料.樓層}${selectedUnit.基本資料.編號} 嗎？解約後目前資料將會歸檔，且該戶將恢復為未售出狀態。`;
+        if (!window.confirm(confirmMsg)) return;
+
+        const uK = `${selectedUnit.基本資料.樓層}_${selectedUnit.基本資料.編號}`;
+        const archiveRecord = {
+           ...selectedUnit,
+           解約日期: new Date().toISOString(),
+           解約時間: new Date().getTime(),
+        };
+
+        const canceledRecords = customData.canceledUnits || [];
+        const updatedCanceled = [...canceledRecords, archiveRecord];
+
+        const overrideUnit = {
+            基本資料: { 樓層: selectedUnit.基本資料.樓層, 編號: selectedUnit.基本資料.編號, 買方: "" },
+            客戶資料: {},
+            house: {},
+            land: {}
+        };
+        if (selectedUnit.客戶資料) {
+            Object.keys(selectedUnit.客戶資料).forEach(k => {
+                overrideUnit.客戶資料[k] = "";
+            });
+        }
+        if (selectedUnit.財務款項.house) {
+            Object.keys(selectedUnit.財務款項.house).forEach(k => {
+                if (k !== '樓層' && k !== '編號') overrideUnit.house[k] = 0;
+            });
+        }
+        if (selectedUnit.財務款項.land) {
+            Object.keys(selectedUnit.財務款項.land).forEach(k => {
+                if (k !== '樓層' && k !== '編號') overrideUnit.land[k] = 0;
+            });
+        }
+
+        const updatedUnits = { ...(customData.units || {}), [uK]: overrideUnit };
+
+        const updatedRemittances = (customData.remittances || []).filter(r => r.unitKey !== uK);
+        const newDeletedImported = [...(customData.deletedImportedRemittances || [])];
+        
+        Object.keys(sheetsData).forEach(name => {
+            if (name.includes('匯款') || name.includes('發票')) {
+              (sheetsData[name] || []).forEach((row, i) => {
+                 const u = parseUnitInfo(row);
+                 if (`${u.f}_${u.u}` === uK) {
+                    const aK = Object.keys(row).find(k => k.includes('金額')) || '金額';
+                    const amt = parseFloat(String(row[aK]).replace(/,/g, '')) || 0;
+                    const id = `${u.f}${u.u}_${amt}_${i}`;
+                    if (!newDeletedImported.includes(id)) newDeletedImported.push(id);
+                 }
+              });
+            }
+        });
+
+        const updatedCustomChanges = (customData.customChanges || []).filter(c => c.unitKey !== uK);
+
+        await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'custom', 'additions'), { 
+            units: updatedUnits,
+            remittances: updatedRemittances,
+            deletedImportedRemittances: newDeletedImported,
+            customChanges: updatedCustomChanges,
+            canceledUnits: updatedCanceled
+        }, { merge: true });
+
+        setSelectedUnit(null);
+        setIsEditingMode(false);
+      };
+
       const exportSelectedStagesToExcel = () => {
         if (selectedExportStages.length === 0) { alert("請至少勾選一個項目！"); return; }
         const salesTabKey = Object.keys(sheetsData).find(k => k.includes('收款總表'));
@@ -1274,10 +1344,10 @@
             </div>
 
             <div className="flex overflow-x-auto gap-2 border-b border-gray-200 mb-2 scrollbar-hide">
-              {Object.keys(sheetsData).filter(t => !t.includes('匯款及發票明細') && !t.includes('預收款')).concat(isAdmin ? ["待開發票清單", "已開未收款明細"] : []).sort((a,b) => {
+              {Object.keys(sheetsData).filter(t => !t.includes('匯款及發票明細') && !t.includes('預收款')).concat(isAdmin ? ["待開發票清單", "已開未收款明細", "已解約資料"] : []).sort((a,b) => {
                  if (a.includes('收款總表') && !b.includes('收款總表')) return -1;
                  if (!a.includes('收款總表') && b.includes('收款總表')) return 1;
-                 const s = ["待開發票清單", "已開未收款明細"];
+                 const s = ["待開發票清單", "已開未收款明細", "已解約資料"];
                  if (s.includes(a) && !s.includes(b)) return 1;
                  if (!s.includes(a) && s.includes(b)) return -1;
                  if (s.includes(a) && s.includes(b)) return s.indexOf(a) - s.indexOf(b);
@@ -1325,6 +1395,27 @@
                             <td className="px-4 py-2 text-right font-bold text-gray-700">{p.targetAmt.toLocaleString()}</td>
                             <td className="px-4 py-2 text-right font-bold text-emerald-600">{p.received.toLocaleString()}</td>
                             <td className="px-4 py-2 text-right font-bold text-red-500">{p.unpaid.toLocaleString()}</td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                ) : activeTab === "已解約資料" ? (
+                  <table className="w-full text-left border-collapse">
+                    <thead className="sticky top-0 z-40 bg-[#F9F9F8] text-[10px] font-bold text-gray-500">
+                      <tr>
+                         <th className="px-4 py-3 border-b text-center">解約日期</th>
+                         <th className="px-4 py-3 border-b text-center">戶別</th>
+                         <th className="px-4 py-3 border-b text-center">買方</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y text-[11px]">
+                      {!(customData?.canceledUnits && customData.canceledUnits.length > 0) ? ( <tr><td colSpan="3" className="py-10 text-center text-gray-400 font-bold">目前無已解約的資料</td></tr> ) : (
+                        (customData.canceledUnits || []).sort((a,b)=>b.解約時間-a.解約時間).map((p, idx) => (
+                          <tr key={idx} className="hover:bg-gray-50/50 transition-colors">
+                            <td className="px-4 py-2 text-center text-gray-500">{new Date(p.解約日期).toLocaleDateString()}</td>
+                            <td className="px-4 py-2 text-center font-bold text-[#8C9B90]">{p.基本資料.樓層}{p.基本資料.編號}</td>
+                            <td className="px-4 py-2 text-center">{p.基本資料.買方 || '-'}</td>
                           </tr>
                         ))
                       )}
@@ -1441,7 +1532,12 @@
                     </div>
                   </div>
                   <div className="flex gap-3">
-                    {isAdmin && ( <button onClick={isEditingMode ? saveClientEdits : ()=>setIsEditingMode(true)} className={`px-4 py-2 rounded-full text-sm font-bold transition-all ${isEditingMode?'bg-green-600 text-white shadow-lg scale-105':'bg-white border hover:bg-gray-50'}`}> {isEditingMode ? <span className="flex items-center gap-1"><Save size={16}/>儲存退出</span> : '✏️ 編輯資料'} </button> )}
+                    {isAdmin && ( 
+                      <>
+                        {!isEditingMode && <button onClick={handleCancelContract} className="px-4 py-2 bg-red-50 text-red-600 border border-red-200 rounded-full text-sm font-bold hover:bg-red-100 transition-all">解約退戶</button>}
+                        <button onClick={isEditingMode ? saveClientEdits : ()=>setIsEditingMode(true)} className={`px-4 py-2 rounded-full text-sm font-bold transition-all ${isEditingMode?'bg-green-600 text-white shadow-lg scale-105':'bg-white border hover:bg-gray-50'}`}> {isEditingMode ? <span className="flex items-center gap-1"><Save size={16}/>儲存退出</span> : '✏️ 編輯資料'} </button> 
+                      </>
+                    )}
                     <button onClick={()=>{setSelectedUnit(null);setIsEditingMode(false);}} className="text-gray-400 hover:bg-gray-100 p-2.5 rounded-full transition-all"><X size={24}/></button>
                   </div>
                 </div>
