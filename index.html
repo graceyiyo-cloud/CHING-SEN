@@ -1082,9 +1082,25 @@
 
       const saveClientEdits = async () => {
         if (!isAdmin || !selectedUnit) return;
-        const uK = `${selectedUnit.基本資料.樓層}_${selectedUnit.基本資料.編號}`;
-        const updatedUnits = { ...customData.units, [uK]: { ...customData.units[uK], 基本資料: selectedUnit.基本資料, 客戶資料: selectedUnit.客戶資料, house: selectedUnit.財務款項.house, land: selectedUnit.財務款項.land } };
-        await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'custom', 'additions'), { units: updatedUnits }, { merge: true });
+        
+        if (selectedUnit.isArchived) {
+           const updatedCanceled = [...(customData.canceledUnits || [])];
+           const targetId = selectedUnit.archiveId;
+           const targetOriginalTime = selectedUnit._originalArchiveTime || selectedUnit.解約時間;
+           
+           const idx = updatedCanceled.findIndex(u => (u.archiveId && targetId && u.archiveId === targetId) || (!u.archiveId && u.解約時間 === targetOriginalTime && u.基本資料.樓層 === selectedUnit.基本資料.樓層 && u.基本資料.編號 === selectedUnit.基本資料.編號));
+           
+           if (idx > -1) {
+               const savedRecord = { ...selectedUnit };
+               delete savedRecord._originalArchiveTime;
+               updatedCanceled[idx] = savedRecord;
+               await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'custom', 'additions'), { canceledUnits: updatedCanceled }, { merge: true });
+           }
+        } else {
+           const uK = `${selectedUnit.基本資料.樓層}_${selectedUnit.基本資料.編號}`;
+           const updatedUnits = { ...customData.units, [uK]: { ...customData.units[uK], 基本資料: selectedUnit.基本資料, 客戶資料: selectedUnit.客戶資料, house: selectedUnit.財務款項.house, land: selectedUnit.財務款項.land } };
+           await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'custom', 'additions'), { units: updatedUnits }, { merge: true });
+        }
         setIsEditingMode(false);
       };
 
@@ -1104,6 +1120,7 @@
         const archiveRecord = {
            ...selectedUnit,
            isArchived: true,
+           archiveId: Date.now().toString(),
            解約日期: parsedDate.toISOString(),
            解約時間: parsedDate.getTime(),
         };
@@ -1422,7 +1439,14 @@
                       {!(customData?.canceledUnits && customData.canceledUnits.length > 0) ? ( <tr><td colSpan="4" className="py-10 text-center text-gray-400 font-bold">目前無已解約的資料</td></tr> ) : (
                         (customData.canceledUnits || []).sort((a,b)=>b.解約時間-a.解約時間).map((p, idx) => (
                           <tr key={idx} className="hover:bg-gray-50/50 transition-colors">
-                            <td className="px-4 py-2 text-center border-r"><button onClick={() => setSelectedUnit(p)} className="text-[9px] bg-[#D4C9B9] text-white px-2 py-1 rounded-md shadow-sm hover:bg-[#8C9B90]">檢視</button></td>
+                            <td className="px-4 py-2 text-center border-r">
+                               <button onClick={() => setSelectedUnit({...p, _originalArchiveTime: p.解約時間})} className="text-[9px] bg-[#D4C9B9] text-white px-2 py-1 rounded-md shadow-sm hover:bg-[#8C9B90] mr-1">檢視</button>
+                               <button onClick={async () => {
+                                   if (!confirm("確定要刪除這筆解約紀錄嗎？")) return;
+                                   const newCanceled = (customData.canceledUnits || []).filter(u => u !== p);
+                                   await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'custom', 'additions'), { canceledUnits: newCanceled }, { merge: true });
+                               }} className="text-[9px] bg-red-100 text-red-600 px-2 py-1 rounded-md shadow-sm hover:bg-red-200">刪除</button>
+                            </td>
                             <td className="px-4 py-2 text-center text-gray-500">{new Date(p.解約日期).toLocaleDateString()}</td>
                             <td className="px-4 py-2 text-center font-bold text-[#8C9B90]">{p.基本資料.樓層}{p.基本資料.編號}</td>
                             <td className="px-4 py-2 text-center">{p.基本資料.買方 || '-'}</td>
@@ -1500,7 +1524,21 @@
                     <div className="bg-[#8C9B90] text-white text-2xl font-bold h-14 px-5 rounded-xl flex items-center justify-center shadow-inner">{selectedUnit.基本資料.樓層}{selectedUnit.基本資料.編號}</div>
                     <div className="flex flex-col gap-1">
                       <h2 className="text-xl font-bold flex flex-wrap items-center gap-2">
-                          {selectedUnit.isArchived && <span className="bg-red-100 text-red-700 text-sm px-2 py-0.5 rounded mr-2 font-bold">已解約 ({new Date(selectedUnit.解約日期).toLocaleDateString()})</span>}
+                          {selectedUnit.isArchived && (
+                            isEditingMode ? (
+                              <div className="flex items-center gap-1 bg-red-50 p-1 rounded">
+                                <span className="text-sm font-bold text-red-700">解約日期:</span>
+                                <input type="date" className="border border-red-200 px-2 py-0.5 rounded text-sm text-red-600" value={selectedUnit.解約日期 ? selectedUnit.解約日期.split('T')[0] : ''} onChange={(e) => {
+                                   const d = new Date(e.target.value);
+                                   if (!isNaN(d.getTime())) {
+                                       setSelectedUnit({...selectedUnit, 解約日期: d.toISOString(), 解約時間: d.getTime()});
+                                   }
+                                }} />
+                              </div>
+                            ) : (
+                              <span className="bg-red-100 text-red-700 text-sm px-2 py-0.5 rounded mr-2 font-bold">已解約 ({new Date(selectedUnit.解約日期).toLocaleDateString()})</span>
+                            )
+                          )}
                           {isEditingMode ? <input className="border px-2 py-1 rounded w-28 text-base" value={selectedUnit.基本資料.買方} onChange={e=>setSelectedUnit({...selectedUnit, 基本資料:{...selectedUnit.基本資料, 買方:e.target.value}})}/> : (selectedUnit.基本資料.買方||'未填寫')}
                           {isEditingMode ? (
                             <input className="border px-2 py-1 rounded w-24 text-base text-blue-600" placeholder="車位號碼" value={selectedUnit.基本資料.車位 || ''} onChange={e=>setSelectedUnit({...selectedUnit, 基本資料:{...selectedUnit.基本資料, 車位:e.target.value}})} />
