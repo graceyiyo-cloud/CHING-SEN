@@ -1383,10 +1383,10 @@
 
                         const displayStages = [ { k: '客變', l: '客變費用' }, { k: '成交', l: '合約總價' }, ...PAYMENT_STAGES.filter(st => st.k !== '客變') ];
                         return displayStages.map(st => {
-                          let exp=0,hA=0,lA=0;
+                          let exp=0,hA=0,lA=0, kMatchH, kMatchL;
                           if (st.k === '客變') exp=charges; else { 
-                            const kMatchH = Object.keys(house).find(x=>x.includes(st.k) && (st.k==='成交'?!x.includes('總價'):true));
-                            const kMatchL = Object.keys(selectedUnit.財務款項.land || {}).find(x=>x.includes(st.k) && (st.k==='成交'?!x.includes('總價'):true));
+                            kMatchH = Object.keys(house).find(x=>x.includes(st.k) && (st.k==='成交'?!x.includes('總價'):true));
+                            kMatchL = Object.keys(selectedUnit.財務款項.land || {}).find(x=>x.includes(st.k) && (st.k==='成交'?!x.includes('總價'):true));
                             hA = kMatchH ? (parseFloat(String(house[kMatchH]).replace(/,/g,''))||0) : 0; 
                             lA = kMatchL ? (parseFloat(String((selectedUnit.財務款項.land || {})[kMatchL]).replace(/,/g,''))||0) : 0; 
                             exp=hA+lA; 
