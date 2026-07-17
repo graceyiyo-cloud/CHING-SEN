@@ -2034,8 +2034,35 @@
                 <div className="overflow-y-auto scrollbar-hide flex-1">
                     <div className="flex gap-2 mb-6"><input id="new_auth_name" type="text" placeholder="人員名稱" className="border w-1/3 p-2.5 rounded-xl text-sm" /><input id="new_auth_email" type="email" placeholder="Email" className="border flex-1 p-2.5 rounded-xl text-sm" /><button onClick={async () => {
                         const n = document.getElementById('new_auth_name').value.trim(), e = document.getElementById('new_auth_email').value.trim().toLowerCase();
-                        if(e && e.includes('@')) { const newList = [...(customData.allowedViewers || []), { name: n, email: e }]; await setDoc(doc(db,'artifacts',appId,'public', 'data','custom','additions'), {allowedViewers: newList}, {merge:true}); }
+                        if(e && e.includes('@')) { 
+                            const newList = [...(customData.allowedViewers || []), { name: n, email: e }]; 
+                            await setDoc(doc(db,'artifacts',appId,'public', 'data','custom','additions'), {allowedViewers: newList}, {merge:true}); 
+                            document.getElementById('new_auth_name').value = '';
+                            document.getElementById('new_auth_email').value = '';
+                        }
                       }} className="bg-[#8C9B90] text-white px-5 py-2.5 rounded-xl text-sm font-bold shadow-md">加入</button>
+                    </div>
+                    <div className="space-y-2">
+                      {(customData.allowedViewers || []).map((v, i) => {
+                          const name = typeof v === 'string' ? '未命名' : v.name;
+                          const email = typeof v === 'string' ? v : v.email;
+                          return (
+                              <div key={i} className="flex justify-between items-center p-3 bg-gray-50 rounded-xl border">
+                                  <div className="flex flex-col">
+                                      <span className="font-bold text-sm text-gray-700">{name}</span>
+                                      <span className="text-xs text-gray-500">{email}</span>
+                                  </div>
+                                  <button onClick={async () => {
+                                      if(!confirm('確定要移除此權限嗎？')) return;
+                                      const newList = (customData.allowedViewers || []).filter((_, idx) => idx !== i);
+                                      await setDoc(doc(db,'artifacts',appId,'public', 'data','custom','additions'), {allowedViewers: newList}, {merge:true});
+                                  }} className="text-red-400 hover:text-red-600 transition-colors p-2"><Trash2 size={16}/></button>
+                              </div>
+                          );
+                      })}
+                      {!(customData.allowedViewers && customData.allowedViewers.length > 0) && (
+                          <div className="text-center text-gray-400 py-10 font-bold text-sm">目前無其他授權人員</div>
+                      )}
                     </div>
                 </div>
               </div>
