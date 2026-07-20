@@ -560,7 +560,7 @@
         reader.readAsBinaryString(file);
       };
       const projectStats = useMemo(() => {
-        let totalSales = 0, totalReceived = 0, soldCount = 0, totalUnitsCount = 0;
+        let totalSales = 0, totalReceived = 0, soldCount = 0, totalUnitsCount = 0, handedOverCount = 0;
         const salesTabKey = Object.keys(sheetsData).find(k => k.includes('收款總表'));
         if (salesTabKey) {
           const rows = sheetsData[salesTabKey] || [];
@@ -607,6 +607,7 @@
              });
 
              if (price > 0) { totalSales += price; soldCount++; }
+             if (customData?.units?.[key]?.基本資料?.交屋日期?.trim()) { handedOverCount++; }
           });
           
           if (customData?.units) {
@@ -624,6 +625,7 @@
                           price += (lk ? (parseFloat(String(land[lk]).replace(/,/g,''))||0) : 0);
                      });
                      if (price > 0) { totalSales += price; soldCount++; }
+                     if (customData?.units?.[key]?.基本資料?.交屋日期?.trim()) { handedOverCount++; }
                  }
              });
           }
@@ -642,7 +644,7 @@
         });
         (customData.remittances || []).forEach(r => { totalReceived += parseFloat(String(r.匯款金額)) || 0; });
         archivedRemittances.forEach(r => { totalReceived += parseFloat(String(r.匯款金額)) || 0; });
-        return { total: totalSales, received: totalReceived, outstanding: totalSales - totalReceived, unitTotal: totalUnitsCount, unitSold: soldCount, unitUnsold: totalUnitsCount - soldCount };
+        return { total: totalSales, received: totalReceived, outstanding: totalSales - totalReceived, unitTotal: totalUnitsCount, unitSold: soldCount, unitUnsold: totalUnitsCount - soldCount, unitHandedOver: handedOverCount };
       }, [sheetsData, customData, archivedRemittances]);
 
       const transferUnitKeys = useMemo(() => {
@@ -1364,6 +1366,7 @@
               <div className="flex w-fit flex-wrap gap-x-6 gap-y-3 bg-white px-5 py-4 rounded-2xl shadow-sm border border-[#D4C9B9]/30">
                 <div className="flex items-center gap-2"><Layers size={16} className="text-sky-500"/><div className="flex flex-col"><span className="text-[10px] text-gray-400 font-bold">總戶數</span><span className="font-bold text-base">{projectStats.unitTotal} 戶</span></div></div>
                 <div className="flex items-center gap-2 border-l pl-6"><PieChart size={16} className="text-green-600"/><div className="flex flex-col"><span className="text-[10px] text-gray-400 font-bold">已售戶數</span><span className="font-bold text-base text-green-600">{projectStats.unitSold}</span></div></div>
+                <div className="flex items-center gap-2 border-l pl-6"><CheckCircle2 size={16} className="text-emerald-500"/><div className="flex flex-col"><span className="text-[10px] text-gray-400 font-bold">已交屋戶數</span><span className="font-bold text-base text-emerald-600">{projectStats.unitHandedOver}</span></div></div>
                 <div className="flex items-center gap-2 border-l pl-6"><AlertCircle size={16} className="text-gray-300"/><div className="flex flex-col"><span className="text-[10px] text-gray-400 font-bold">待售戶數</span><span className="font-bold text-base text-gray-400">{projectStats.unitUnsold}</span></div></div>
               </div>
             </div>
@@ -1473,7 +1476,8 @@
                           const uInfo = parseUnitInfo(row); const unitKey = `${uInfo.f}_${uInfo.u}`;
                           const isM = rowSpans[unitKey] > 1; const isF = !isM || idx === 0 || `${normStr(combinedData[idx-1]['樓層'])}_${normStr(combinedData[idx-1]['編號'])}` !== unitKey;
                           const span = rowSpans[unitKey] || 1; const isTransfer = transferUnitKeys.has(unitKey);
-                          const isHandoverComplete = activeTab.includes('收款總表') && allUnitsPaymentStatus[unitKey] && Object.keys(allUnitsPaymentStatus[unitKey]).length > 0 && Object.values(allUnitsPaymentStatus[unitKey]).every(st => st.exp === 0 || st.unpaid <= 0) && !!(customData?.units?.[unitKey]?.基本資料?.交屋日期?.trim());
+                          const handoverDateStr = customData?.units?.[unitKey]?.基本資料?.交屋日期?.trim();
+                          const isHandoverComplete = activeTab.includes('收款總表') && allUnitsPaymentStatus[unitKey] && Object.keys(allUnitsPaymentStatus[unitKey]).length > 0 && Object.values(allUnitsPaymentStatus[unitKey]).every(st => st.exp === 0 || st.unpaid <= 0) && !!handoverDateStr;
                           return (
                             <tr key={idx} className={`transition-colors ${isHandoverComplete ? 'bg-gray-200 hover:bg-gray-300' : 'hover:bg-gray-50/50'}`}>
                               {isF && <td rowSpan={span} className={`px-1 py-2 border-r text-center sticky left-0 z-30 sticky-shadow align-middle ${isHandoverComplete ? 'bg-gray-200' : 'bg-white'}`}><button onClick={() => openUnitDetails(uInfo.f, uInfo.u, uInfo.b)} className="text-[9px] bg-[#D4C9B9] text-white px-2 py-1 rounded-md shadow-sm hover:bg-[#8C9B90]">檢視</button></td>}
@@ -1488,8 +1492,17 @@
                                   if (stageKey && allUnitsPaymentStatus[unitKey]) { const status = allUnitsPaymentStatus[unitKey][stageKey]; if (status && status.exp > 0 && status.unpaid > 0) isUnpaidStage = true; }
                                   return (
                                     <td key={i} rowSpan={isSticky?span:1} className={`px-2 py-2 border-r ${colClass} ${getAlignClass(col, row[col])} ${isSticky ? `sticky z-20 align-middle ${isHandoverComplete ? 'bg-gray-200' : 'bg-white'}` : ''} ${col==='買方'?'font-bold text-[#8C9B90]':''} ${isUnpaidStage ? 'bg-red-50 text-red-600 font-medium' : ''} whitespace-pre-wrap`} style={isSticky?{left:leftPos}:{}}>
-                                      {displayVal}
-                                      {col === '買方' && isTransfer && <span className="ml-1 px-1 bg-orange-100 text-orange-600 text-[9px] font-bold rounded">換</span>}
+                                      <div className={col === '買方' ? "flex flex-col items-center justify-center gap-0.5" : ""}>
+                                          <div>
+                                            {displayVal}
+                                            {col === '買方' && isTransfer && <span className="ml-1 px-1 bg-orange-100 text-orange-600 text-[9px] font-bold rounded">換</span>}
+                                          </div>
+                                          {col === '買方' && handoverDateStr && (
+                                              <div className="text-[9px] font-normal text-emerald-600 bg-emerald-50 px-1 py-0.5 rounded-md border border-emerald-200 w-max mx-auto flex items-center gap-0.5">
+                                                  <CheckCircle2 size={10} />交屋: {handoverDateStr}
+                                              </div>
+                                          )}
+                                      </div>
                                     </td>
                                   );
                               })}
