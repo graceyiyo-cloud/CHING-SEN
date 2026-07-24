@@ -211,6 +211,7 @@
       const [showExportMenu, setShowExportMenu] = useState(false);
       const [selectedExportStages, setSelectedExportStages] = useState([]);
       const exportMenuRef = useRef(null);
+      const prevPreOpenReceivedMapRef = useRef({});
 
       const isAdmin = useMemo(() => user && user.email === ADMIN_EMAIL, [user]);
 
@@ -326,6 +327,24 @@
 
         return map;
       }, [selectedUnit, firebaseInvoices]);
+
+      useEffect(() => {
+        if (!selectedUnit?.基本資料?.預開發票清單) return;
+        const currentMap = preOpenReceivedMap;
+        const prevMap = prevPreOpenReceivedMapRef.current;
+        selectedUnit.基本資料.預開發票清單.forEach(inv => {
+            const num = String(inv.號碼 || '').trim().toUpperCase();
+            if (!num) return;
+            const targetAmt = parseFloat(String(inv.金額 || '').replace(/,/g, '')) || 0;
+            const currentReceived = currentMap[num] || 0;
+            const prevReceived = prevMap[num] || 0;
+            
+            if (currentReceived > targetAmt && prevReceived <= targetAmt && targetAmt > 0) {
+                alert(`提示：發票號碼 ${num} 沖帳總金額 (${currentReceived.toLocaleString()}) 已超過發票開立金額 (${targetAmt.toLocaleString()})！`);
+            }
+        });
+        prevPreOpenReceivedMapRef.current = currentMap;
+      }, [preOpenReceivedMap, selectedUnit?.基本資料?.預開發票清單]);
 
       useEffect(() => {
         const initAuth = async () => { if (initialAuthToken) await signInWithCustomToken(auth, initialAuthToken); };
