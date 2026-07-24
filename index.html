@@ -203,6 +203,7 @@
       
       const [firebaseInvoices, setFirebaseInvoices] = useState({});
       const [customData, setCustomData] = useState({ units: {}, remittances: [], customChanges: [], deletedImportedRemittances: [], allowedViewers: [] });
+      const [loginLogs, setLoginLogs] = useState({});
       const [archivedRemittances, setArchivedRemittances] = useState([]);
 
       const [remitInput, setRemitInput] = useState({ date: '', amt: '' });
@@ -350,7 +351,19 @@
         const initAuth = async () => { if (initialAuthToken) await signInWithCustomToken(auth, initialAuthToken); };
         initAuth();
         const unsubscribe = onAuthStateChanged(auth, (u) => {
-          if (u) { setUser(u); setAuthError(""); } else { setUser(null); }
+          if (u) { 
+            setUser(u); setAuthError(""); 
+            if (u.email && u.email !== ADMIN_EMAIL) {
+                const emailKey = u.email.replace(/\./g, '_');
+                setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'custom', 'login_logs'), {
+                    [emailKey]: {
+                        email: u.email,
+                        lastLogin: new Date().toISOString(),
+                        name: u.displayName || ''
+                    }
+                }, { merge: true }).catch(console.error);
+            }
+          } else { setUser(null); }
           setIsAuthLoading(false);
         });
         return () => unsubscribe();
@@ -367,6 +380,9 @@
         const unsubArchived = onSnapshot(doc(db, 'artifacts', appId, 'public', 'data', 'custom', 'archived'), (s) => {
             if (s.exists()) { setArchivedRemittances(s.data().remittances || []); } else { setArchivedRemittances([]); }
         });
+        const unsubLogs = onSnapshot(doc(db, 'artifacts', appId, 'public', 'data', 'custom', 'login_logs'), (s) => {
+            if (s.exists()) { setLoginLogs(s.data()); } else { setLoginLogs({}); }
+        });
         const unsubMaster = onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'master_sheets'), (snapshot) => {
           if (!snapshot.empty) {
             const newSheets = {};
@@ -382,7 +398,7 @@
             if ((activeTab === "請匯入資料" || activeTab === "請先登入系統") && sortedKeys.length > 0) setActiveTab(sortedKeys[0]);
           } else { setCloudStatus("synced"); }
         });
-        return () => { unsubInv(); unsubCustom(); unsubMaster(); unsubArchived(); };
+        return () => { unsubInv(); unsubCustom(); unsubMaster(); unsubArchived(); unsubLogs(); };
       }, [user]);
 
       useEffect(() => {
@@ -2078,10 +2094,15 @@
                       {(customData.allowedViewers || []).map((v, i) => {
                           const name = typeof v === 'string' ? '未命名' : v.name;
                           const email = typeof v === 'string' ? v : v.email;
+                          const log = loginLogs[email.replace(/\./g, '_')];
+                          const lastLoginStr = log?.lastLogin ? new Date(log.lastLogin).toLocaleString() : '尚未登入';
                           return (
                               <div key={i} className="flex justify-between items-center p-3 bg-gray-50 rounded-xl border">
                                   <div className="flex flex-col">
-                                      <span className="font-bold text-sm text-gray-700">{name}</span>
+                                      <div className="flex items-center gap-2">
+                                          <span className="font-bold text-sm text-gray-700">{name}</span>
+                                          <span className="text-[10px] text-gray-400 bg-gray-200 px-1.5 py-0.5 rounded">最後登入: {lastLoginStr}</span>
+                                      </div>
                                       <span className="text-xs text-gray-500">{email}</span>
                                   </div>
                                   <button onClick={async () => {
