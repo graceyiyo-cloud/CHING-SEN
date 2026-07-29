@@ -1312,6 +1312,10 @@
                 const splitPrepay = prepayAllocations[r._id] || 0;
                 const amt = rawAmt - splitPrepay;
 
+                const preOpenInvoices = details.基本資料?.預開發票清單 || [];
+                const isLand = invNum && preOpenInvoices.some(inv => String(inv.號碼).trim().toUpperCase() === invNum && inv.土地款);
+                const invNumDisplay = invNum ? (isLand ? `${invNum} (土地款)` : invNum) : '';
+
                 const baseInfo = {
                     '戶別': `${u.f}${u.u}`,
                     '收款日期': renderDateIfApplicable(dateKey, r[dateKey])
@@ -1321,7 +1325,6 @@
                     exportData.push({
                         ...baseInfo,
                         '金額': splitPrepay,
-                        '備註 (發票號碼)': '預收',
                         '發票號碼': '預收 (免開立)'
                     });
                 }
@@ -1329,8 +1332,7 @@
                     exportData.push({
                         ...baseInfo,
                         '金額': amt,
-                        '備註 (發票號碼)': invNum || '',
-                        '發票號碼': invNum || ''
+                        '發票號碼': invNumDisplay
                     });
                 }
             });
