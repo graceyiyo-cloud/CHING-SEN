@@ -1220,6 +1220,49 @@
         setIsEditingMode(false);
       };
 
+      const exportReceiptsToExcel = () => {
+        const exportData = [];
+        
+        // Loop through all units and their receipts
+        const seen = new Set();
+        const allUnits = [];
+        combinedData.forEach(row => {
+            const uInfo = parseUnitInfo(row); const key = `${uInfo.f}_${uInfo.u}`;
+            if (key !== "_" && !seen.has(key) && !uInfo.f.includes('合計')) { seen.add(key); allUnits.push(uInfo); }
+        });
+
+        allUnits.forEach(u => {
+            const details = getUnitFullDetails(u.f, u.u, u.b);
+            const records = details.匯款紀錄 || [];
+            
+            records.forEach(r => {
+                const rK = r._id;
+                const cD = firebaseInvoices[rK] || {};
+                const invNum = String(cD['發票號碼'] || r['發票號碼'] || '').trim().toUpperCase();
+                const invDate = cD['發票日期'] !== undefined ? cD['發票日期'] : renderDateIfApplicable('發票日期', r['發票日期']);
+                const amtKey = Object.keys(r).find(k=>k.includes('金額'))||'金額';
+                const dateKey = Object.keys(r).find(k=>k.includes('日期'))||'日期';
+                
+                exportData.push({
+                    '戶別': `${u.f}${u.u}`,
+                    '收款日期': renderDateIfApplicable(dateKey, r[dateKey]),
+                    '金額': parseFloat(String(r[amtKey]).replace(/,/g,'')) || 0,
+                    '發票號碼': invNum || ''
+                });
+            });
+        });
+
+        if (exportData.length === 0) {
+            alert('沒有收款明細可匯出');
+            return;
+        }
+
+        const ws = XLSX.utils.json_to_sheet(exportData);
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, "收款明細");
+        XLSX.writeFile(wb, `收款明細_${new Date().toLocaleDateString().replace(/\//g, '')}.xlsx`);
+      };
+
       const exportSelectedStagesToExcel = () => {
         if (selectedExportStages.length === 0) { alert("請至少勾選一個項目！"); return; }
         const salesTabKey = Object.keys(sheetsData).find(k => k.includes('收款總表'));
@@ -1337,11 +1380,14 @@
               {isAdmin && (
                 <>
                   <div className="relative" ref={exportMenuRef}>
-                      <button onClick={() => setShowExportMenu(!showExportMenu)} className="bg-white border border-sky-600 text-sky-600 px-3 py-1.5 rounded-full text-[11px] font-bold hover:bg-sky-600 hover:text-white flex items-center gap-1 shadow-sm transition-all"><Download size={12} />匯出期款清單</button>
+                      <button onClick={() => setShowExportMenu(!showExportMenu)} className="bg-white border border-sky-600 text-sky-600 px-3 py-1.5 rounded-full text-[11px] font-bold hover:bg-sky-600 hover:text-white flex items-center gap-1 shadow-sm transition-all"><Download size={12} />匯出報表</button>
                       {showExportMenu && (
-                          <div className="absolute top-full right-0 mt-2 w-56 bg-white border border-gray-200 rounded-xl shadow-xl z-50 overflow-hidden">
-                              <div className="bg-sky-50 px-4 py-2 border-b border-sky-100 flex items-center gap-2"><CheckSquare size={14} className="text-sky-600"/><span className="text-xs font-bold text-sky-800">勾選欲匯出的期款</span></div>
-                              <div className="max-h-60 overflow-y-auto p-2">
+                          <div className="absolute top-full right-0 mt-2 w-64 bg-white border border-gray-200 rounded-xl shadow-xl z-50 overflow-hidden flex flex-col">
+                              <button onClick={() => { handleExportSystemExcel(); setShowExportMenu(false); }} className="w-full text-left px-4 py-3 border-b text-xs font-bold text-gray-700 hover:bg-gray-50 flex items-center gap-2"><Database size={14} className="text-emerald-600" />匯出系統資料</button>
+                              <button onClick={() => { exportReceiptsToExcel(); setShowExportMenu(false); }} className="w-full text-left px-4 py-3 border-b text-xs font-bold text-gray-700 hover:bg-gray-50 flex items-center gap-2"><ClipboardList size={14} className="text-amber-500" />匯出收款明細</button>
+                              
+                              <div className="bg-sky-50 px-4 py-2 border-b border-sky-100 flex justify-between items-center"><div className="flex items-center gap-2"><CheckSquare size={14} className="text-sky-600"/><span className="text-[11px] font-bold text-sky-800">匯出指定期款</span></div><button onClick={() => { if(selectedExportStages.length === PAYMENT_STAGES.length) setSelectedExportStages([]); else setSelectedExportStages(PAYMENT_STAGES.map(s=>s.k)); }} className="text-[10px] text-sky-600 hover:underline">{selectedExportStages.length === PAYMENT_STAGES.length ? '全不選' : '全選'}</button></div>
+                              <div className="max-h-48 overflow-y-auto p-2 border-b">
                                   {PAYMENT_STAGES.map(st => (
                                       <label key={st.k} className="flex items-center gap-2 px-2 py-1.5 hover:bg-gray-50 rounded cursor-pointer transition-colors">
                                           <input type="checkbox" className="rounded text-sky-600 focus:ring-sky-500" checked={selectedExportStages.includes(st.k)} onChange={() => toggleExportStage(st.k)} />
@@ -1349,11 +1395,10 @@
                                       </label>
                                   ))}
                               </div>
-                              <div className="p-2 border-t bg-gray-50"><button onClick={exportSelectedStagesToExcel} disabled={selectedExportStages.length === 0} className={`w-full py-1.5 rounded text-xs font-bold transition-all shadow-sm ${selectedExportStages.length > 0 ? 'bg-sky-600 text-white hover:bg-sky-700' : 'bg-gray-200 text-gray-400 cursor-not-allowed'}`}>匯出勾選項目</button></div>
+                              <div className="p-2 bg-gray-50"><button onClick={exportSelectedStagesToExcel} disabled={selectedExportStages.length === 0} className={`w-full py-1.5 rounded text-xs font-bold transition-all shadow-sm ${selectedExportStages.length > 0 ? 'bg-sky-600 text-white hover:bg-sky-700' : 'bg-gray-200 text-gray-400 cursor-not-allowed'}`}>匯出已勾選期款</button></div>
                           </div>
                       )}
                   </div>
-                  <button onClick={handleExportSystemExcel} className="bg-white border border-emerald-600 text-emerald-600 px-3 py-1.5 rounded-full text-[11px] font-bold hover:bg-emerald-600 hover:text-white flex items-center gap-1 shadow-sm transition-all"><Download size={12} />匯出系統資料</button>
                   <button onClick={() => setShowBackupModal(true)} className="bg-white border border-indigo-500 text-indigo-500 px-3 py-1.5 rounded-full text-[11px] font-bold hover:bg-indigo-500 hover:text-white flex items-center gap-1 shadow-sm transition-all"><Database size={12} />備份還原</button>
                   <button onClick={() => setShowAuthModal(true)} className="bg-white border border-[#8C9B90] text-[#8C9B90] px-3 py-1.5 rounded-full text-[11px] font-bold hover:bg-[#8C9B90] hover:text-white flex items-center gap-1 shadow-sm transition-all"><ShieldAlert size={12} />權限管理</button>
                   <button onClick={() => setShowAddUnitModal(true)} className="bg-white border border-[#8C9B90] text-[#8C9B90] px-3 py-1.5 rounded-full text-[11px] font-bold hover:bg-[#8C9B90] hover:text-white flex items-center gap-1 shadow-sm transition-all"><Plus size={12} />雲端新增</button>
@@ -2165,3 +2210,4 @@
 </body>
 </html>
 <!-- Trigger new build -->
+<!-- Done -->
