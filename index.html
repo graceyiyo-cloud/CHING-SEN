@@ -119,13 +119,26 @@
 
     // 接受 115/5/4、115-05-04、1150504、2026/5/4、2026-05-04，統一為民國 115/05/04；空白回傳 ''，無效回傳 null
     const normalizeMinguoDate = (input) => {
-      const s = String(input ?? '').trim();
+      if (input instanceof Date) return isNaN(input.getTime()) ? null : `${input.getFullYear() - 1911}/${pad2(input.getMonth() + 1)}/${pad2(input.getDate())}`;
+      let s = String(input ?? '').trim();
       if (!s) return '';
-      let match = s.match(/^(\d{2,4})[\/\-.年](\d{1,2})[\/\-.月](\d{1,2})日?$/)
-        || s.match(/^(\d{3})(\d{2})(\d{2})$/)
-        || s.match(/^(\d{4})(\d{2})(\d{2})$/);
-      if (!match) return null;
-      let y = parseInt(match[1], 10); const m = parseInt(match[2], 10); const d = parseInt(match[3], 10);
+      // Excel 日期序號
+      if (/^\d{5}(\.\d+)?$/.test(s)) {
+        const num = Number(s);
+        if (num > 20000 && num < 80000) {
+          const dt = new Date(Math.round((num - 25569) * 86400 * 1000));
+          return `${dt.getUTCFullYear() - 1911}/${pad2(dt.getUTCMonth() + 1)}/${pad2(dt.getUTCDate())}`;
+        }
+      }
+      s = s.replace(/^民國\s*/, '').replace(/(T|\s)\d{1,2}:\d{2}.*$/, '').trim();
+      let y, m, d, match;
+      // 美式 月/日/年（Excel 預設 m/d/yy）：第一段 ≤ 12 且最後一段為 2 或 4 位數
+      if ((match = s.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2}|\d{4})$/)) && parseInt(match[1], 10) <= 12) {
+        m = parseInt(match[1], 10); d = parseInt(match[2], 10); y = parseInt(match[3], 10);
+        if (match[3].length === 2) y += y < 70 ? 2000 : 1900;
+      } else if ((match = s.match(/^(\d{2,4})[\/\-.年](\d{1,2})[\/\-.月](\d{1,2})日?$/) || s.match(/^(\d{3})(\d{2})(\d{2})$/) || s.match(/^(\d{4})(\d{2})(\d{2})$/))) {
+        y = parseInt(match[1], 10); m = parseInt(match[2], 10); d = parseInt(match[3], 10);
+      } else return null;
       if (y > 1911) y -= 1911;
       if (y < 1 || m < 1 || m > 12 || d < 1) return null;
       if (d > new Date(y + 1911, m, 0).getDate()) return null;
@@ -159,6 +172,8 @@
       if (val === undefined || val === null || val === '') return '';
       const sVal = String(val).trim();
       if ((String(key).includes('日期') || String(key).includes('日') || String(key).includes('時間戳記')) && sVal !== '') {
+        const minguo = normalizeMinguoDate(sVal);
+        if (minguo) return minguo;
         if (!isNaN(sVal)) {
           const num = Number(sVal);
           if (num > 20000 && num < 80000) {
