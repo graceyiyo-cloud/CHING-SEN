@@ -130,7 +130,7 @@
           return `${dt.getUTCFullYear() - 1911}/${pad2(dt.getUTCMonth() + 1)}/${pad2(dt.getUTCDate())}`;
         }
       }
-      s = s.replace(/^民國\s*/, '').replace(/(T|\s)\d{1,2}:\d{2}.*$/, '').trim();
+      s = s.replace(/^民國\s*/, '').replace(/(T|\s)\s*(上午|下午|AM|PM)?\s*\d{1,2}:\d{2}.*$/i, '').trim().replace(/\s*([\/\-.年月日])\s*/g, '$1').trim();
       let y, m, d, match;
       // 美式 月/日/年（Excel 預設 m/d/yy）：第一段 ≤ 12 且最後一段為 2 或 4 位數
       if ((match = s.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2}|\d{4})$/)) && parseInt(match[1], 10) <= 12) {
