@@ -458,6 +458,21 @@
         return keys;
       }, [sheetsData, customData.units]);
 
+      // 簽約日期：手動填寫優先，否則沿用主表中含「簽約日」的欄位
+      const sheetSignDates = useMemo(() => {
+        const map = {};
+        Object.keys(sheetsData).forEach(name => (sheetsData[name] || []).forEach(row => {
+          const k = Object.keys(row).find(x => x.includes('簽約日'));
+          if (!k || !row[k]) return;
+          const u = parseUnitInfo(row); const key = `${u.f}_${u.u}`;
+          if (map[key]) return;
+          const d = renderDateIfApplicable('日期', row[k]);
+          map[key] = normalizeMinguoDate(d) || String(d);
+        }));
+        return map;
+      }, [sheetsData]);
+      const getSignDate = (uK) => { const c = customData.units?.[uK]?.基本資料?.簽約日期; return c !== undefined ? c : (sheetSignDates[uK] || ''); };
+
       const invoicesDocRef = () => doc(db, 'artifacts', appId, 'public', 'data', 'invoices', 'all_invoices');
       const additionsDocRef = () => doc(db, 'artifacts', appId, 'public', 'data', 'custom', 'additions');
 
@@ -789,7 +804,7 @@
                 const f = normStr(cu.基本資料.樓層), u = normStr(cu.基本資料.編號);
                 const exists = rows.find(r => normStr(r['樓層']) === f && normStr(r['編號']) === u);
                 if (!exists) {
-                    rows.push({ '樓層': cu.基本資料.樓層, '編號': cu.基本資料.編號, '買方': cu.基本資料.買方, '車位': cu.基本資料.車位, '預收款': cu.基本資料.預收款, '交屋日期': cu.基本資料.交屋日期 });
+                    rows.push({ '樓層': cu.基本資料.樓層, '編號': cu.基本資料.編號, '買方': cu.基本資料.買方, '車位': cu.基本資料.車位, '預收款': cu.基本資料.預收款, '簽約日期': getSignDate(key), '交屋日期': cu.基本資料.交屋日期 });
                 } else {
                     if (cu.基本資料?.買方) exists['買方'] = cu.基本資料.買方;
                     if (cu.基本資料?.車位) exists['車位'] = cu.基本資料.車位;
@@ -797,6 +812,9 @@
                     if (cu.基本資料?.交屋日期) exists['交屋日期'] = cu.基本資料.交屋日期;
                 }
              });
+          }
+          if (sheetName.includes('收款總表')) {
+             rows = rows.map(r => { const sd = getSignDate(`${normStr(r['樓層'])}_${normStr(r['編號'])}`); return sd ? { ...r, '簽約日期': sd } : r; });
           }
           
           if (sheetName.match(/匯款|發票/)) {
@@ -1042,6 +1060,7 @@
           if(cu.基本資料?.尾款發票號碼 !== undefined) info.基本資料.尾款發票號碼 = cu.基本資料.尾款發票號碼;
           if(cu.基本資料?.尾款發票日期 !== undefined) info.基本資料.尾款發票日期 = cu.基本資料.尾款發票日期;
           if(cu.基本資料?.交屋日期 !== undefined) info.基本資料.交屋日期 = cu.基本資料.交屋日期;
+          if(cu.基本資料?.簽約日期 !== undefined) info.基本資料.簽約日期 = cu.基本資料.簽約日期;
           
           if(cu.基本資料?.預開發票清單 !== undefined) {
               info.基本資料.預開發票清單 = cu.基本資料.預開發票清單;
@@ -1057,6 +1076,7 @@
               info.基本資料.預開發票清單 = [];
           }
         }
+        if (info.基本資料.簽約日期 === undefined) info.基本資料.簽約日期 = sheetSignDates[uK] || '';
         const allRems = [...(customData.remittances || []), ...archivedRemittances];
         const rems = allRems.filter(r => r.unitKey === uK).map(r => ({ ...r, _id: r.id, _isCustom: true }));
         info.匯款紀錄 = [...info.匯款紀錄, ...rems];
@@ -1450,6 +1470,7 @@
         const normalizedBasic = {
           ...selectedUnit.基本資料,
           ...(selectedUnit.基本資料.交屋日期 !== undefined ? { 交屋日期: normalizeMinguoDate(selectedUnit.基本資料.交屋日期) ?? selectedUnit.基本資料.交屋日期 } : {}),
+          ...(selectedUnit.基本資料.簽約日期 !== undefined ? { 簽約日期: normalizeMinguoDate(selectedUnit.基本資料.簽約日期) ?? selectedUnit.基本資料.簽約日期 } : {}),
           ...(selectedUnit.基本資料.預開發票清單 ? { 預開發票清單: selectedUnit.基本資料.預開發票清單.map(inv => ({ ...inv, 日期: normalizeMinguoDate(inv.日期), 號碼: String(inv.號碼 || '').trim().toUpperCase() })) } : {})
         };
         const unitToSave = { ...selectedUnit, 基本資料: normalizedBasic };
@@ -1744,7 +1765,7 @@
                 
                 stageStatus[st.k] = { exp, paid, unpaid: exp > 0 ? exp - paid : 0 };
             });
-            const rowData = { '樓層': u.f, '編號': u.u, '買方': u.b };
+            const rowData = { '樓層': u.f, '編號': u.u, '買方': u.b, '簽約日期': details.基本資料.簽約日期 || '' };
             selectedExportStages.forEach(stKey => {
                 const stageInfo = PAYMENT_STAGES.find(s => s.k === stKey);
                 if (stageInfo) {
@@ -2138,6 +2159,7 @@
                           const isM = rowSpans[unitKey] > 1; const isF = !isM || idx === 0 || `${normStr(combinedData[idx-1]['樓層'])}_${normStr(combinedData[idx-1]['編號'])}` !== unitKey;
                           const span = rowSpans[unitKey] || 1; const isTransfer = transferUnitKeys.has(unitKey);
                           const handoverDateStr = customData?.units?.[unitKey]?.基本資料?.交屋日期?.trim();
+                          const signDateStr = String(getSignDate(unitKey) || '').trim();
                           const isHandoverComplete = activeTab.includes('收款總表') && allUnitsPaymentStatus[unitKey] && Object.keys(allUnitsPaymentStatus[unitKey]).length > 0 && Object.values(allUnitsPaymentStatus[unitKey]).every(st => st.exp === 0 || st.unpaid <= 0) && !!handoverDateStr;
                           return (
                             <tr key={idx} className={`transition-colors ${isHandoverComplete ? 'bg-gray-200 hover:bg-gray-300' : 'hover:bg-gray-50/50'}`}>
@@ -2158,6 +2180,9 @@
                                             {displayVal}
                                             {col === '買方' && isTransfer && <span className="ml-1 px-1 bg-orange-100 text-orange-600 text-[9px] font-bold rounded">換</span>}
                                           </div>
+                                          {col === '買方' && signDateStr && (
+                                              <div className="text-[10px] font-normal text-gray-500">簽約 {signDateStr}</div>
+                                          )}
                                           {col === '買方' && handoverDateStr && (
                                               <div className="text-[9px] font-normal text-emerald-600 bg-emerald-50 px-1 py-0.5 rounded-md border border-emerald-200 w-max mx-auto flex items-center gap-0.5">
                                                   <CheckCircle2 size={10} />交屋: {handoverDateStr}
@@ -2216,6 +2241,13 @@
                             <input className="border px-2 py-1 rounded w-24 text-base text-blue-600" placeholder="車位號碼" value={selectedUnit.基本資料.車位 || ''} onChange={e=>setSelectedUnit({...selectedUnit, 基本資料:{...selectedUnit.基本資料, 車位:e.target.value}})} />
                           ) : (
                             selectedUnit.基本資料.車位 && <span className="text-sm font-normal text-blue-600 bg-blue-50 px-2.5 py-0.5 rounded-md border border-blue-200 ml-1">車位: {normStr(selectedUnit.基本資料.車位)}</span>
+                          )}
+                          {isEditingMode ? (
+                            <MinguoDateInput className="border px-2 py-1 rounded w-36 text-base font-normal text-gray-600 bg-white" ariaLabel="簽約日期" placeholder="簽約日期" value={selectedUnit.基本資料.簽約日期 || ''} onChange={v=>setSelectedUnit(prev => ({...prev, 基本資料:{...prev.基本資料, 簽約日期:v}}))} />
+                          ) : (
+                            selectedUnit.基本資料.簽約日期 && (
+                              <span className="text-sm font-normal text-gray-600 bg-gray-50 px-2.5 py-0.5 rounded-md border border-gray-200 ml-1">簽約: {selectedUnit.基本資料.簽約日期}</span>
+                            )
                           )}
                           {isEditingMode ? (
                             <MinguoDateInput className="border px-2 py-1 rounded w-36 text-base font-normal text-gray-600 bg-white" ariaLabel="交屋日期" placeholder="交屋日期" value={selectedUnit.基本資料.交屋日期 || ''} onChange={v=>setSelectedUnit(prev => ({...prev, 基本資料:{...prev.基本資料, 交屋日期:v}}))} />
